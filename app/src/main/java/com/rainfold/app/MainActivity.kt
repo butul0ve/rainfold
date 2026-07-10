@@ -49,7 +49,13 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text("Rainfold", style = MaterialTheme.typography.displaySmall)
                         Text("Endless soundscapes for sleep and focus")
-                        NoiseTypeDropdown(selected = noiseType, onSelect = { noiseType = it })
+                        NoiseTypeDropdown(
+                            selected = noiseType,
+                            onSelect = { type ->
+                                noiseType = type
+                                if (isPlaying) player.play(NoiseMix(noiseType = type))
+                            },
+                        )
                         Button(onClick = {
                             if (isPlaying) player.stop() else player.play(NoiseMix(noiseType = noiseType))
                             isPlaying = !isPlaying
