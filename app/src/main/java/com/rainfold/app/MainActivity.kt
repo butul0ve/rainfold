@@ -4,11 +4,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -16,6 +20,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.rainfold.app.domain.NoiseMix
@@ -47,6 +53,7 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var isPlaying by rememberSaveable { mutableStateOf(false) }
                     var noiseType by rememberSaveable { mutableStateOf(NoiseType.PINK) }
+                    var volume by rememberSaveable { mutableStateOf(0.5f) }
                     Column(
                         modifier = Modifier.fillMaxSize().padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -59,18 +66,30 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         Text("Endless soundscapes for sleep and focus")
-                        NoiseTypeDropdown(
-                            selected = noiseType,
-                            onSelect = { type ->
-                                noiseType = type
-                                if (isPlaying) player.play(NoiseMix(noiseType = type))
-                            },
-                        )
-                        Button(onClick = {
-                            if (isPlaying) player.stop() else player.play(NoiseMix(noiseType = noiseType))
-                            isPlaying = !isPlaying
-                        }) {
-                            Text(if (isPlaying) "Stop" else "Play")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                NoiseTypeDropdown(
+                                    selected = noiseType,
+                                    onSelect = { type ->
+                                        noiseType = type
+                                        if (isPlaying) player.play(NoiseMix(noiseType = type, noiseVolume = volume))
+                                    },
+                                )
+                                Button(onClick = {
+                                    if (isPlaying) player.stop() else player.play(NoiseMix(noiseType = noiseType, noiseVolume = volume))
+                                    isPlaying = !isPlaying
+                                }) {
+                                    Text(if (isPlaying) "Stop" else "Play")
+                                }
+                            }
+                            Spacer(Modifier.width(24.dp))
+                            VerticalVolume(
+                                volume = volume,
+                                onVolumeChange = {
+                                    volume = it
+                                    player.setVolume(it)
+                                },
+                            )
                         }
                     }
                 }
@@ -111,6 +130,21 @@ private fun noiseTypeLabel(type: NoiseType): String = when (type) {
     NoiseType.WHITE -> "White noise"
     NoiseType.PINK -> "Pink noise"
     NoiseType.BROWN -> "Brown noise"
+}
+
+@Composable
+private fun VerticalVolume(volume: Float, onVolumeChange: (Float) -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("VOL", style = MaterialTheme.typography.labelSmall)
+        Box(modifier = Modifier.height(176.dp).width(48.dp), contentAlignment = Alignment.Center) {
+            Slider(
+                value = volume,
+                onValueChange = onVolumeChange,
+                modifier = Modifier.width(176.dp).graphicsLayer(rotationZ = -90f),
+            )
+        }
+        Text("${(volume * 100).toInt()}", style = MaterialTheme.typography.labelSmall)
+    }
 }
 
 @Composable

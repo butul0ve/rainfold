@@ -11,16 +11,19 @@ import com.rainfold.app.dsp.NoiseGenerator
 import com.rainfold.app.dsp.PinkNoiseGenerator
 import com.rainfold.app.dsp.WhiteNoiseGenerator
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 class NoisePlayer {
     private val isPlaying = AtomicBoolean(false)
+    private val volume = AtomicReference(DEFAULT_VOLUME)
     private var renderThread: Thread? = null
     private var audioTrack: AudioTrack? = null
 
     @Synchronized
     fun play(mix: NoiseMix) {
         stop()
+        volume.set(mix.noiseVolume.coerceIn(0f, 1f))
         val track = createTrack()
         audioTrack = track
         isPlaying.set(true)
@@ -30,7 +33,7 @@ class NoisePlayer {
             track.play()
             while (isPlaying.get()) {
                 buffer.indices.forEach { index ->
-                    buffer[index] = AudioLimiter.limit(generator.nextSample() * mix.noiseVolume)
+                    buffer[index] = AudioLimiter.limit(generator.nextSample() * volume.get())
                 }
                 track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
             }
@@ -48,6 +51,10 @@ class NoisePlayer {
             release()
         }
         audioTrack = null
+    }
+
+    fun setVolume(value: Float) {
+        volume.set(value.coerceIn(0f, 1f))
     }
 
     private fun createTrack(): AudioTrack {
@@ -84,5 +91,6 @@ class NoisePlayer {
     private companion object {
         const val SAMPLE_RATE = 48_000
         const val BUFFER_FRAMES = 2_048
+        const val DEFAULT_VOLUME = 0.5f
     }
 }
