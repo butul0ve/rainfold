@@ -42,7 +42,13 @@ class BrownNoiseGenerator(
     private var previous = 0f
 
     override fun nextSample(): Float {
-        previous = (previous + white.nextSample() * 0.02f).coerceIn(-1f, 1f)
-        return previous
+        previous = (previous + white.nextSample() * INCREMENT) / DAMPING
+        return (previous * OUTPUT_GAIN).coerceIn(-1f, 1f)
+    }
+
+    private companion object {
+        const val INCREMENT = 0.02f
+        const val DAMPING = 1.02f
+        const val OUTPUT_GAIN = 3.5f
     }
 }

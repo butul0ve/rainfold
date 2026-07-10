@@ -28,4 +28,18 @@ class AudioDspTest {
             }
         }
     }
+
+    @Test
+    fun `brown noise has an audible normalized level after warmup`() {
+        val generator = BrownNoiseGenerator()
+        repeat(4_800) { generator.nextSample() }
+        val rms = rms(FloatArray(48_000) { generator.nextSample() })
+
+        assertTrue(rms in 0.1f..0.6f)
+    }
+
+    private fun rms(samples: FloatArray): Float {
+        val meanSquare = samples.sumOf { sample -> (sample * sample).toDouble() } / samples.size
+        return kotlin.math.sqrt(meanSquare).toFloat()
+    }
 }
