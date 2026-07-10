@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -18,6 +19,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.rainfold.app.domain.NoiseMix
@@ -38,7 +42,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            var darkTheme by rememberSaveable { mutableStateOf(true) }
+            RainfoldTheme(darkTheme = darkTheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var isPlaying by rememberSaveable { mutableStateOf(false) }
                     var noiseType by rememberSaveable { mutableStateOf(NoiseType.PINK) }
@@ -47,7 +52,12 @@ class MainActivity : ComponentActivity() {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        Text("Rainfold", style = MaterialTheme.typography.displaySmall)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Rainfold", style = MaterialTheme.typography.displaySmall)
+                            TextButton(onClick = { darkTheme = !darkTheme }) {
+                                Text(if (darkTheme) "Light theme" else "Dark theme")
+                            }
+                        }
                         Text("Endless soundscapes for sleep and focus")
                         NoiseTypeDropdown(
                             selected = noiseType,
@@ -101,4 +111,24 @@ private fun noiseTypeLabel(type: NoiseType): String = when (type) {
     NoiseType.WHITE -> "White noise"
     NoiseType.PINK -> "Pink noise"
     NoiseType.BROWN -> "Brown noise"
+}
+
+@Composable
+private fun RainfoldTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
+    val colors = if (darkTheme) {
+        darkColorScheme(
+            primary = Color(0xFF9FE8DB),
+            onPrimary = Color(0xFF003731),
+            surface = Color(0xFF183440),
+            onSurface = Color(0xFFE3F3F0),
+        )
+    } else {
+        lightColorScheme(
+            primary = Color(0xFF176E62),
+            onPrimary = Color.White,
+            surface = Color.White,
+            onSurface = Color(0xFF17332E),
+        )
+    }
+    MaterialTheme(colorScheme = colors, content = content)
 }
