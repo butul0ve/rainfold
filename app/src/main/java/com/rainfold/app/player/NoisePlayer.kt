@@ -33,7 +33,7 @@ class NoisePlayer {
             track.play()
             while (isPlaying.get()) {
                 buffer.indices.forEach { index ->
-                    buffer[index] = AudioLimiter.limit(generator.nextSample() * volume.get())
+                    buffer[index] = AudioLimiter.limit(generator.nextSample() * volume.get() * OUTPUT_GAIN)
                 }
                 track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
             }
@@ -92,5 +92,6 @@ class NoisePlayer {
         const val SAMPLE_RATE = 48_000
         const val BUFFER_FRAMES = 2_048
         const val DEFAULT_VOLUME = 0.5f
+        const val OUTPUT_GAIN = 4f
     }
 }

@@ -8,10 +8,19 @@ object AudioMixer {
 }
 
 object AudioLimiter {
-    /** Smoothly limits a float PCM sample without hard clipping. */
-    fun limit(sample: Float): Float = sample / (1f + kotlin.math.abs(sample))
+    /** Preserves normal PCM levels and smoothly limits only samples above the safe threshold. */
+    fun limit(sample: Float): Float {
+        val magnitude = kotlin.math.abs(sample)
+        if (magnitude <= THRESHOLD) return sample
+
+        val normalizedExcess = (magnitude - THRESHOLD) / (1f - THRESHOLD)
+        val limitedMagnitude = THRESHOLD + (1f - THRESHOLD) * kotlin.math.tanh(normalizedExcess.toDouble()).toFloat()
+        return kotlin.math.sign(sample) * limitedMagnitude
+    }
 
     fun limitInPlace(samples: FloatArray) {
         samples.indices.forEach { index -> samples[index] = limit(samples[index]) }
     }
+
+    private const val THRESHOLD = 0.8f
 }

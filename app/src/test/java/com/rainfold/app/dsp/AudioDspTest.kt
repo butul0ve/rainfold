@@ -13,6 +13,12 @@ class AudioDspTest {
     }
 
     @Test
+    fun `limiter preserves safe pcm levels`() {
+        assertEquals(0.5f, AudioLimiter.limit(0.5f), 0.0001f)
+        assertEquals(-0.8f, AudioLimiter.limit(-0.8f), 0.0001f)
+    }
+
+    @Test
     fun `mixer applies volume to every source sample`() {
         val output = floatArrayOf(0.1f, 0.2f)
         AudioMixer.mix(output, floatArrayOf(0.4f, -0.2f), 0.5f)
