@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">Rainfold</string>
+    <string name="app_title">Rainfold: звуки для сна</string>
+    <string name="app_tagline">Бесконечные звуковые сцены для сна и концентрации</string>
+    <string name="sound">ЗВУК</string>
+    <string name="volume">ГРОМКОСТЬ</string>
+    <string name="play">Играть</string>
+    <string name="stop">Остановить</string>
+    <string name="noise_selected">Выбрано</string>
+    <string name="white_noise">Белый шум</string>
+    <string name="pink_noise">Розовый шум</string>
+    <string name="brown_noise">Коричневый шум</string>
+    <string name="light_theme">Включить светлую тему</string>
+    <string name="dark_theme">Включить тёмную тему</string>
+    <string name="volume_percent">%1$d%%</string>
+    <string name="audio_error">Не удалось воспроизвести звук. Попробуйте запустить ещё раз.</string>
+</resources>

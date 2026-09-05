@@ -21,7 +21,7 @@ class NoisePlayer {
     private var audioTrack: AudioTrack? = null
 
     @Synchronized
-    fun play(mix: NoiseMix) {
+    fun play(mix: NoiseMix, onError: () -> Unit) {
         stop()
         volume.set(mix.noiseVolume.coerceIn(0f, 1f))
         val track = createTrack()
@@ -30,12 +30,29 @@ class NoisePlayer {
         renderThread = thread(name = "RainfoldAudio", isDaemon = true) {
             val generator = generatorFor(mix.noiseType)
             val buffer = FloatArray(BUFFER_FRAMES)
-            track.play()
-            while (isPlaying.get()) {
-                buffer.indices.forEach { index ->
-                    buffer[index] = AudioLimiter.limit(generator.nextSample() * volume.get() * OUTPUT_GAIN)
+            try {
+                track.play()
+                while (isPlaying.get()) {
+                    buffer.indices.forEach { index ->
+                        buffer[index] =
+                            AudioLimiter.limit(generator.nextSample() * volume.get() * OUTPUT_GAIN)
+                    }
+                    var offset = 0
+                    while (isPlaying.get() && offset < buffer.size) {
+                        val written = track.write(
+                            buffer,
+                            offset,
+                            buffer.size - offset,
+                            AudioTrack.WRITE_BLOCKING
+                        )
+                        check(written > 0) { "AudioTrack write failed: $written" }
+                        offset += written
+                    }
                 }
-                track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
+            } catch (_: RuntimeException) {
+                if (isPlaying.getAndSet(false)) onError()
+            } finally {
+                track.release()
             }
         }
     }
@@ -43,13 +60,10 @@ class NoisePlayer {
     @Synchronized
     fun stop() {
         isPlaying.set(false)
-        renderThread?.join(200)
+        // Pause unblocks a pending write. The render thread alone releases its track.
+        audioTrack?.runCatching { pause() }
+        renderThread?.join()
         renderThread = null
-        audioTrack?.runCatching {
-            pause()
-            flush()
-            release()
-        }
         audioTrack = null
     }
 

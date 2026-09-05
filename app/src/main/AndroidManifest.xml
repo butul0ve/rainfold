@@ -4,9 +4,13 @@
 
     <application
         android:allowBackup="true"
-        android:label="Rainfold: Sleep Sounds &amp; Noise"
+        android:label="@string/app_title"
         android:supportsRtl="true"
         android:theme="@style/Theme.Rainfold">
+        <service
+            android:name=".player.PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

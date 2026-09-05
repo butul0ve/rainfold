@@ -1,3 +1,17 @@
 <resources>
     <string name="app_name">Rainfold</string>
+    <string name="app_title">Rainfold: Sleep Sounds &amp; Noise</string>
+    <string name="app_tagline">Endless soundscapes for sleep and focus</string>
+    <string name="sound">SOUND</string>
+    <string name="volume">VOLUME</string>
+    <string name="play">Play</string>
+    <string name="stop">Stop</string>
+    <string name="noise_selected">Selected</string>
+    <string name="white_noise">White noise</string>
+    <string name="pink_noise">Pink noise</string>
+    <string name="brown_noise">Brown noise</string>
+    <string name="light_theme">Switch to light theme</string>
+    <string name="dark_theme">Switch to dark theme</string>
+    <string name="volume_percent">%1$d%%</string>
+    <string name="audio_error">Audio could not start. Try playing again.</string>
 </resources>
