@@ -1,83 +1,374 @@
 package com.rainfold.app.player
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
-import android.os.Binder
+import android.content.IntentFilter
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Bundle
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
+import androidx.media3.common.SimpleBasePlayer
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.rainfold.app.MainActivity
+import com.rainfold.app.R
+import com.rainfold.app.domain.NoiseMix
+import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackCommand
-import com.rainfold.app.domain.PlaybackController
 import com.rainfold.app.domain.PlaybackSession
-import com.rainfold.app.domain.PlaybackSnapshot
 import com.rainfold.app.domain.PlaybackState
+import com.rainfold.app.domain.SessionSettings
 import kotlin.time.Duration.Companion.milliseconds
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
-/** Bound ownership for stage 0. MediaController and a foreground session arrive in stage 1. */
-class PlaybackService : MediaSessionService(), PlaybackController {
-    private val player = NoisePlayer()
-    private val session = PlaybackSession { SystemClock.elapsedRealtime().milliseconds }
+@UnstableApi
+class PlaybackService : MediaSessionService() {
+    private val engine = NoisePlayer()
+    private val clockSession = PlaybackSession { SystemClock.elapsedRealtime().milliseconds }
     private val handler = Handler(Looper.getMainLooper())
-    private var playbackId = 0
-    private val mutableState = MutableStateFlow(PlaybackSnapshot())
-    override val state = mutableState.asStateFlow()
-
-    inner class LocalBinder : Binder() {
-        val controller: PlaybackController get() = this@PlaybackService
+    private lateinit var adapter: SessionPlayer
+    private var mediaSession: MediaSession? = null
+    private lateinit var audioManager: AudioManager
+    private lateinit var focusRequest: AudioFocusRequest
+    private lateinit var wakeLock: PowerManager.WakeLock
+    private var resumeOnFocus = false
+    private var hasFocus = false
+    private var failed = false
+    private var generation = 0
+    private val preferences by lazy { getSharedPreferences("playback", MODE_PRIVATE) }
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) dispatch(PlaybackCommand.Pause)
+        }
     }
-
-    override fun onBind(intent: Intent?): IBinder? {
-        val mediaBinder = super.onBind(intent)
-        return if (intent?.action == ACTION_LOCAL) LocalBinder() else mediaBinder
-    }
-
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = null
-
-    override fun dispatch(command: PlaybackCommand) {
-        val previous = mutableState.value.playback
-        val next = session.dispatch(command)
-        try {
-            if (next is PlaybackState.Playing) {
-                if (previous !is PlaybackState.Playing || previous.mix.noiseType != next.mix.noiseType) {
-                    val id = ++playbackId
-                    player.play(next.mix) {
-                        handler.post { if (id == playbackId) reportAudioFailure() }
-                    }
-                } else {
-                    player.setVolume(next.mix.noiseVolume)
-                }
-            } else {
-                playbackId++
-                player.stop()
+    private val tick = object : Runnable {
+        override fun run() {
+            if (clockSession.state() is PlaybackState.Idle) dispatch(PlaybackCommand.Stop)
+            else {
+                publish()
+                handler.postDelayed(this, 250)
             }
-            mutableState.value = PlaybackSnapshot(session.mix, next)
-        } catch (_: RuntimeException) {
-            reportAudioFailure()
         }
     }
 
-    private fun reportAudioFailure() {
-        playbackId++
-        player.stop()
-        mutableState.value = PlaybackSnapshot(
-            session.mix,
-            session.dispatch(PlaybackCommand.Stop),
-            audioFailed = true
+    override fun onCreate() {
+        super.onCreate()
+        val type = runCatching {
+            NoiseType.valueOf(
+                preferences.getString(
+                    "noise",
+                    "PINK"
+                )!!
+            )
+        }.getOrDefault(NoiseType.PINK)
+        val volume =
+            preferences.getFloat("volume", 0.5f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f
+        clockSession.dispatch(PlaybackCommand.UpdateMix(NoiseMix(type, volume)))
+        clockSession.configure(
+            SessionSettings(
+                preferences.getLong("duration", 0).takeIf { it > 0 }?.milliseconds,
+                preferences.getLong("fadeIn", 1000).coerceIn(0, 60_000).milliseconds,
+                preferences.getLong("fadeOut", 10_000).coerceIn(0, 60_000).milliseconds,
+            )
         )
+        audioManager = getSystemService(AudioManager::class.java)
+        wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "Rainfold:Playback"
+        )
+        focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build()
+            )
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener({ change ->
+                when (change) {
+                    AudioManager.AUDIOFOCUS_GAIN -> {
+                        hasFocus = true
+                        if (resumeOnFocus) dispatch(PlaybackCommand.Resume)
+                        resumeOnFocus = false
+                    }
+
+                    else -> {
+                        val wasPlaying = clockSession.state() is PlaybackState.Playing
+                        hasFocus = false
+                        dispatch(
+                            PlaybackCommand.Pause,
+                            abandonFocus = change == AudioManager.AUDIOFOCUS_LOSS
+                        )
+                        resumeOnFocus = wasPlaying && change != AudioManager.AUDIOFOCUS_LOSS
+                    }
+                }
+            }, handler).build()
+        registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+        adapter = SessionPlayer()
+        mediaSession = MediaSession.Builder(this, adapter)
+            .setSessionActivity(
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    Intent(this, MainActivity::class.java),
+                    PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+            .setCallback(object : MediaSession.Callback {
+                override fun onConnect(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo
+                ): MediaSession.ConnectionResult {
+                    return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                        .setAvailableSessionCommands(
+                            MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                                .add(SessionCommand(UPDATE, Bundle.EMPTY)).build()
+                        ).build()
+                }
+
+                override fun onCustomCommand(
+                    session: MediaSession, controller: MediaSession.ControllerInfo,
+                    customCommand: SessionCommand, args: Bundle
+                ): ListenableFuture<SessionResult> {
+                    if (customCommand.customAction != UPDATE) return Futures.immediateFuture(
+                        SessionResult(SessionError.ERROR_NOT_SUPPORTED)
+                    )
+                    return try {
+                        if (args.containsKey("noise")) dispatch(
+                            PlaybackCommand.UpdateMix(
+                                clockSession.mix.copy(
+                                    noiseType = NoiseType.valueOf(requireNotNull(args.getString("noise"))),
+                                    noiseVolume = args.getFloat(
+                                        "volume",
+                                        clockSession.mix.noiseVolume
+                                    )
+                                )
+                            )
+                        )
+                        if (args.containsKey("duration")) dispatch(
+                            PlaybackCommand.Configure(
+                                SessionSettings(
+                                    args.getLong("duration").takeIf { it > 0 }?.milliseconds,
+                                    args.getLong("fadeIn").coerceIn(0, 60_000).milliseconds,
+                                    args.getLong("fadeOut").coerceIn(0, 60_000).milliseconds
+                                )
+                            )
+                        )
+                        Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    } catch (_: IllegalArgumentException) {
+                        Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
+                    }
+                }
+            }).build()
+        publish()
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
+        mediaSession
+
+    private fun dispatch(command: PlaybackCommand, abandonFocus: Boolean = true) {
+        val previous = clockSession.state()
+        if (abandonFocus) resumeOnFocus = false
+        failed = false
+        try {
+            val starting = (command == PlaybackCommand.Play && previous is PlaybackState.Idle) ||
+                (command == PlaybackCommand.Resume && previous is PlaybackState.Paused)
+            if (starting) {
+                // Android 15+ requires foreground eligibility before requesting audio focus.
+                startService(Intent(this, PlaybackService::class.java))
+                val manager = getSystemService(NotificationManager::class.java)
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        "playback",
+                        getString(R.string.app_name),
+                        NotificationManager.IMPORTANCE_LOW
+                    )
+                )
+                startForeground(
+                    1001, Notification.Builder(this, "playback")
+                        .setSmallIcon(android.R.drawable.ic_media_play)
+                        .setContentTitle(getString(R.string.app_name))
+                        .setContentText(getString(R.string.play)).build()
+                )
+                if (!hasFocus) {
+                    hasFocus =
+                        audioManager.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    check(hasFocus) { "Audio focus denied" }
+                }
+            }
+            val next = clockSession.dispatch(command)
+            if (next is PlaybackState.Playing) {
+                if (previous !is PlaybackState.Playing) {
+                    generation++
+                    val id = generation
+                    if (!wakeLock.isHeld) wakeLock.acquire()
+                    engine.setDeadline(
+                        next.remaining?.let { SystemClock.elapsedRealtime() + it.inWholeMilliseconds },
+                        clockSession.settings.fadeOut.inWholeMilliseconds
+                    )
+                    engine.play(
+                        next.mix,
+                        if (starting && previous is PlaybackState.Idle) clockSession.settings.fadeIn.inWholeMilliseconds else 50
+                    ) {
+                        handler.post { if (id == generation) audioFailure() }
+                    }
+                } else engine.update(next.mix)
+                handler.removeCallbacks(tick)
+                handler.postDelayed(tick, 250)
+            } else if (previous is PlaybackState.Playing || command == PlaybackCommand.Stop ||
+                (command == PlaybackCommand.Pause && abandonFocus)
+            ) {
+                silenceAndRelease(abandonFocus)
+            }
+            if (command is PlaybackCommand.UpdateMix || command is PlaybackCommand.Configure) saveSettings()
+            publish()
+        } catch (_: RuntimeException) {
+            audioFailure()
+        }
+    }
+
+    private fun silenceAndRelease(abandonFocus: Boolean) {
+        handler.removeCallbacks(tick)
+        val drainMs = engine.fadeToSilence()
+        val id = ++generation
+        handler.postDelayed({
+            if (generation == id) {
+                engine.stop()
+                if (wakeLock.isHeld) wakeLock.release()
+                if (abandonFocus) {
+                    audioManager.abandonAudioFocusRequest(focusRequest)
+                    hasFocus = false
+                }
+                if (clockSession.state() is PlaybackState.Idle) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                } else {
+                    stopForeground(STOP_FOREGROUND_DETACH)
+                }
+            }
+        }, drainMs)
+    }
+
+    private fun audioFailure() {
+        clockSession.dispatch(PlaybackCommand.Stop)
+        silenceAndRelease(true)
+        failed = true
+        publish()
+    }
+
+    private fun saveSettings() {
+        preferences.edit().putString("noise", clockSession.mix.noiseType.name)
+            .putFloat("volume", clockSession.mix.noiseVolume)
+            .putLong("duration", clockSession.settings.duration?.inWholeMilliseconds ?: 0)
+            .putLong("fadeIn", clockSession.settings.fadeIn.inWholeMilliseconds)
+            .putLong("fadeOut", clockSession.settings.fadeOut.inWholeMilliseconds).apply()
+    }
+
+    private fun publish() {
+        adapter.refresh()
+        val state = clockSession.state()
+        mediaSession?.setSessionExtras(Bundle().apply {
+            putString("noise", clockSession.mix.noiseType.name)
+            putFloat("volume", clockSession.mix.noiseVolume)
+            putString(
+                "status", when (state) {
+                    is PlaybackState.Playing -> "playing"; is PlaybackState.Paused -> "paused"; else -> "idle"
+                }
+            )
+            putLong(
+                "remaining", when (state) {
+                    is PlaybackState.Playing -> state.remaining; is PlaybackState.Paused -> state.remaining; else -> null
+                }?.inWholeMilliseconds ?: -1
+            )
+            putLong("duration", clockSession.settings.duration?.inWholeMilliseconds ?: 0)
+            putLong("fadeIn", clockSession.settings.fadeIn.inWholeMilliseconds)
+            putLong("fadeOut", clockSession.settings.fadeOut.inWholeMilliseconds)
+            putBoolean("failed", failed)
+        })
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (clockSession.state() !is PlaybackState.Playing) stopSelf()
     }
 
     override fun onDestroy() {
-        playbackId++
+        generation++
         handler.removeCallbacksAndMessages(null)
-        player.stop()
+        engine.stop()
+        if (wakeLock.isHeld) wakeLock.release()
+        audioManager.abandonAudioFocusRequest(focusRequest)
+        unregisterReceiver(noisyReceiver)
+        mediaSession?.release()
+        adapter.release()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
+    private inner class SessionPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
+        fun refresh() = invalidateState()
+        override fun getState(): State {
+            val playback = clockSession.state()
+            val title = getString(
+                when (clockSession.mix.noiseType) {
+                    NoiseType.WHITE -> R.string.white_noise
+                    NoiseType.PINK -> R.string.pink_noise
+                    NoiseType.BROWN -> R.string.brown_noise
+                }
+            )
+            return State.Builder().setAvailableCommands(
+                Player.Commands.Builder().addAll(
+                    Player.COMMAND_PLAY_PAUSE, Player.COMMAND_PREPARE, Player.COMMAND_STOP,
+                    Player.COMMAND_GET_CURRENT_MEDIA_ITEM, Player.COMMAND_GET_TIMELINE,
+                    Player.COMMAND_GET_METADATA, Player.COMMAND_RELEASE
+                ).build()
+            )
+                .setPlayWhenReady(
+                    playback is PlaybackState.Playing,
+                    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+                )
+                .setPlaybackState(if (playback is PlaybackState.Idle) Player.STATE_IDLE else Player.STATE_READY)
+                .setPlaylist(
+                    listOf(
+                        MediaItemData.Builder("noise").setMediaItem(
+                            MediaItem.Builder()
+                                .setMediaId("noise").setMediaMetadata(
+                                    MediaMetadata.Builder().setTitle(title)
+                                        .setArtist(getString(R.string.app_name)).build()
+                                ).build()
+                        ).build()
+                    )
+                )
+                .build()
+        }
+
+        override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
+            dispatch(if (!playWhenReady) PlaybackCommand.Pause else if (clockSession.state() is PlaybackState.Paused) PlaybackCommand.Resume else PlaybackCommand.Play)
+            return Futures.immediateVoidFuture()
+        }
+
+        override fun handlePrepare(): ListenableFuture<*> = Futures.immediateVoidFuture()
+        override fun handleStop(): ListenableFuture<*> {
+            dispatch(PlaybackCommand.Stop)
+            return Futures.immediateVoidFuture()
+        }
+    }
+
     companion object {
-        const val ACTION_LOCAL = "com.rainfold.app.BIND_PLAYBACK"
+        const val UPDATE = "com.rainfold.app.UPDATE"
     }
 }

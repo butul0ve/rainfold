@@ -125,4 +125,22 @@ class PlaybackSessionTest {
             (session.dispatch(PlaybackCommand.Play) as PlaybackState.Playing).remaining
         )
     }
+
+    @Test
+    fun `configuration commands cannot change an active or paused deadline`() {
+        val settings = SessionSettings(duration = 60.seconds)
+        session.dispatch(PlaybackCommand.Configure(settings))
+        session.dispatch(PlaybackCommand.Play)
+        now += 10.seconds
+        session.dispatch(PlaybackCommand.Configure(SessionSettings(duration = 90.seconds)))
+        assertEquals(settings, session.settings)
+        assertEquals(50.seconds, (session.state() as PlaybackState.Playing).remaining)
+        session.dispatch(PlaybackCommand.Pause)
+        session.dispatch(PlaybackCommand.Configure(SessionSettings()))
+        assertEquals(settings, session.settings)
+        session.dispatch(PlaybackCommand.Stop)
+        session.dispatch(PlaybackCommand.Configure(SessionSettings()))
+        assertNull(session.settings.duration)
+    }
+
 }

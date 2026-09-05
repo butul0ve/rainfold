@@ -9,6 +9,12 @@
 - Calculate session duration from a monotonic clock. Avoid periodic decrementing counters.
 - Prevent audible clicks, clipping and underruns: use ramped fades, headroom/limiting and appropriately sized audio buffers.
 
+## Devices and emulators
+
+- Obtain explicit user approval before running adb/emulator commands, installing or launching an app, or interacting with a connected phone or emulator. A connected device may be occupied by unrelated work; its presence is not authorization.
+- Agree on the target device and scope of the check first. Do not start, stop, wake, lock, reconfigure or otherwise control a device outside that scope.
+- Local unit tests, lint and APK builds can run without device approval. Building an APK does not authorize installing it.
+
 ## Code quality
 
 - Keep changes focused, readable and idiomatic. Do not mix refactors with feature work unless necessary.

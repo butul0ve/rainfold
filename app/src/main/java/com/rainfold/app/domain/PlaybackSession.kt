@@ -2,7 +2,7 @@ package com.rainfold.app.domain
 
 import kotlin.time.Duration
 
-/** Null duration means endless. Timing values are contracts; audio envelopes arrive in stage 1. */
+/** Null duration means endless. Fades are applied by the audio renderer. */
 data class SessionSettings(
     val duration: Duration? = null,
     val fadeIn: Duration = Duration.ZERO,
@@ -16,6 +16,7 @@ data class SessionSettings(
 }
 
 sealed interface PlaybackCommand {
+    data class Configure(val settings: SessionSettings) : PlaybackCommand
     data object Play : PlaybackCommand
     data object Pause : PlaybackCommand
     data object Resume : PlaybackCommand
@@ -52,6 +53,8 @@ class PlaybackSession(private val now: () -> Duration) {
     fun dispatch(command: PlaybackCommand): PlaybackState {
         state()
         when (command) {
+            is PlaybackCommand.Configure -> if (status == Status.IDLE) configure(command.settings)
+
             PlaybackCommand.Play -> if (status == Status.IDLE) {
                 elapsed = Duration.ZERO
                 startedAt = now()

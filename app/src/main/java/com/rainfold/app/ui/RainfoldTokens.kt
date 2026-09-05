@@ -14,6 +14,7 @@ internal object RainfoldTokens {
     val size14 = 14.dp
     val size16 = 16.dp
     val size18 = 18.dp
+    val size24 = 24.dp
     val size32 = 32.dp
     val size44 = 44.dp
     val size52 = 52.dp

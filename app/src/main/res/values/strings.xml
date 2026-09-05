@@ -14,4 +14,19 @@
     <string name="dark_theme">Switch to dark theme</string>
     <string name="volume_percent">%1$d%%</string>
     <string name="audio_error">Audio could not start. Try playing again.</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="playing">Playing</string>
+    <string name="paused">Paused</string>
+    <string name="ready">Ready</string>
+    <string name="no_timer">No timer</string>
+    <string name="remaining_time">Remaining: %1$d:%2$02d</string>
+    <string name="session_actions">Session actions</string>
+    <string name="stop_session">Stop session</string>
+    <string name="timer">Timer</string>
+    <string name="settings_after_stop">Stop the session to change timer and fades.</string>
+    <string name="minutes_value">%1$d min</string>
+    <string name="seconds_value">%1$d s</string>
+    <string name="fade_in">Fade in</string>
+    <string name="fade_out">Fade out</string>
 </resources>

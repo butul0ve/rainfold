@@ -14,4 +14,19 @@
     <string name="dark_theme">Включить тёмную тему</string>
     <string name="volume_percent">%1$d%%</string>
     <string name="audio_error">Не удалось воспроизвести звук. Попробуйте запустить ещё раз.</string>
+    <string name="pause">Пауза</string>
+    <string name="resume">Продолжить</string>
+    <string name="playing">Воспроизведение</string>
+    <string name="paused">На паузе</string>
+    <string name="ready">Готово к воспроизведению</string>
+    <string name="no_timer">Без таймера</string>
+    <string name="remaining_time">Осталось: %1$d:%2$02d</string>
+    <string name="session_actions">Действия с сессией</string>
+    <string name="stop_session">Остановить сессию</string>
+    <string name="timer">Таймер</string>
+    <string name="settings_after_stop">Остановите сессию, чтобы изменить таймер и плавные переходы.</string>
+    <string name="minutes_value">%1$d мин</string>
+    <string name="seconds_value">%1$d с</string>
+    <string name="fade_in">Плавное начало</string>
+    <string name="fade_out">Плавное завершение</string>
 </resources>
