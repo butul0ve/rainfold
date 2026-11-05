@@ -15,7 +15,7 @@ class NoisePlayerTest {
     fun `new play after deadline fades in while reusing the output`() {
         val output = FakeOutput()
         val now = AtomicLong()
-        val player = NoisePlayer({ output }, now::get, {}, {})
+        val player = NoisePlayer({ output }, now::get, {}, {}, { FloatArray(48_000) })
         try {
             player.play(NoiseMix(NoiseType.WHITE, 1f), 30, deadline = 1000, fadeOutMs = 50) {}
             repeat(5) {
@@ -47,7 +47,7 @@ class NoisePlayerTest {
         val output = FakeOutput()
         val now = AtomicLong()
         val failures = LinkedBlockingQueue<Unit>()
-        val player = NoisePlayer({ output }, now::get, {}, {})
+        val player = NoisePlayer({ output }, now::get, {}, {}, { FloatArray(48_000) })
         try {
             player.play(NoiseMix(), 30, deadline = 1000, fadeOutMs = 50) { failures.add(Unit) }
             output.writes.await()
@@ -159,6 +159,7 @@ class NoisePlayerTest {
             elapsedRealtime = { 0 },
             prepareThread = { check(attempts.getAndIncrement() > 0) },
             logFailure = {},
+            loadRain = { FloatArray(48_000) },
         )
         try {
             player.play(NoiseMix(), 30) { failures.add(Unit) }
@@ -195,7 +196,71 @@ class NoisePlayerTest {
         assertTrue(failures.isEmpty())
     }
 
-    private fun player(factory: () -> AudioOutput) = NoisePlayer(factory, { 0 }, {}, {})
+    @Test
+    fun `rain transitions keep one output and the original deadline`() {
+        val output = FakeOutput()
+        val now = AtomicLong(100)
+        val creations = AtomicInteger()
+        val loads = AtomicInteger()
+        val failures = LinkedBlockingQueue<Unit>()
+        val player = NoisePlayer(
+            { creations.incrementAndGet(); output }, now::get, {}, {},
+            { loads.incrementAndGet(); FloatArray(48_000) { 0.5f } },
+        )
+        var mix = NoiseMix(noiseMuted = true, rainVolume = 1f)
+        fun block(): FloatArray {
+            output.writes.await()
+            return output.buffers.await()
+        }
+        fun change(next: NoiseMix, expected: Float) {
+            player.update(next)
+            var pcm = FloatArray(0)
+            repeat(6) { output.results.add(512); pcm = block() }
+            assertTrue(pcm.all { kotlin.math.abs(it - expected) < 0.00001f })
+        }
+        try {
+            player.play(mix, 30, deadline = 1000, fadeOutMs = 50) { failures.add(Unit) }
+            assertTrue(block().all { it == 0f })
+            mix = mix.copy(rainEnabled = true)
+            change(mix, 0.2f)
+            change(mix.copy(rainMuted = true), 0f)
+            change(mix.copy(rainVolume = 0.25f), 0.05f)
+            change(mix.copy(rainEnabled = false), 0f)
+            change(mix, 0.2f)
+            now.set(1000)
+            output.results.add(512)
+            assertTrue(block().all { it == 0f })
+            player.update(mix.copy(rainVolume = 0.9f))
+            output.results.add(512)
+            assertTrue(block().all { it == 0f })
+        } finally {
+            player.stop()
+        }
+        assertEquals(1, creations.get())
+        assertEquals(1, loads.get())
+        assertEquals(1, output.releases.get())
+        assertTrue(failures.isEmpty())
+    }
+
+    @Test
+    fun `unreadable rain asset reports an error without allocating an output`() {
+        val creations = AtomicInteger()
+        val failures = LinkedBlockingQueue<Unit>()
+        val player = NoisePlayer(
+            { creations.incrementAndGet(); FakeOutput() }, { 0 }, {}, {},
+            { throw java.io.IOException("Unreadable asset") },
+        )
+        try {
+            player.play(NoiseMix(), 30) { failures.add(Unit) }
+            failures.await()
+            assertEquals(0, creations.get())
+            assertTrue(failures.isEmpty())
+        } finally {
+            player.stop()
+        }
+    }
+
+    private fun player(factory: () -> AudioOutput) = NoisePlayer(factory, { 0 }, {}, {}, { FloatArray(48_000) })
 
     private data class Write(val offset: Int, val size: Int)
 

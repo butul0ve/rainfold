@@ -120,6 +120,25 @@ class AudioFocusPolicyTest {
         assertEquals(PlaybackState.Idle, session.state())
     }
 
+    @Test
+    fun `rain add mute volume and removal during repeated focus loss retain resume and timer`() {
+        session.configure(SessionSettings(duration = 60.seconds))
+        user(PlaybackCommand.Play)
+        now = 10.seconds
+        transientLoss()
+        user(PlaybackCommand.UpdateMix(session.mix.copy(rainEnabled = true)))
+        transientLoss()
+        user(PlaybackCommand.UpdateMix(session.mix.copy(rainMuted = true, noiseMuted = true)))
+        now += 2.hours
+        user(PlaybackCommand.UpdateMix(session.mix.copy(rainVolume = 0.9f, rainMuted = false)))
+        user(PlaybackCommand.UpdateMix(session.mix.copy(rainEnabled = false)))
+        transientLoss()
+        gain()
+        assertEquals(PlaybackState.Playing(session.mix, 50.seconds), session.state())
+        assertEquals(now + 50.seconds, session.deadline)
+        assertFalse(focus.onGain())
+    }
+
     private fun user(command: PlaybackCommand) {
         focus.onUserCommand(command)
         if (session.dispatch(command) is PlaybackState.Playing) focus.cancelResume()

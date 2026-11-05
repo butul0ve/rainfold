@@ -4,6 +4,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -12,6 +13,10 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +42,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RainfoldScreen(
     state: PlaybackScreenState,
@@ -45,8 +51,14 @@ fun RainfoldScreen(
     onVolumeChange: (Float) -> Unit,
     onStop: () -> Unit,
     onConfigure: (SessionSettings) -> Unit,
+    onRainVolumeChange: (Float) -> Unit,
+    onNoiseMute: () -> Unit,
+    onRainMute: () -> Unit,
+    onAddRain: () -> Unit,
+    onRemoveRain: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
+    var addSound by remember { mutableStateOf(false) }
     val idle = state.playback is PlaybackState.Idle
     val remaining = when (val playback = state.playback) {
         is PlaybackState.Playing -> playback.remaining
@@ -55,61 +67,130 @@ fun RainfoldScreen(
     }
     RainfoldTheme(darkTheme = isSystemInDarkTheme()) {
         Surface(Modifier.fillMaxSize()) {
-            Column(
-                Modifier.safeDrawingPadding().fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(RainfoldTokens.size24),
-                verticalArrangement = Arrangement.spacedBy(RainfoldTokens.size16),
-            ) {
-                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.displaySmall)
-                Text(stringResource(R.string.app_tagline), style = MaterialTheme.typography.bodyMedium)
-                SettingPicker(stringResource(R.string.sound), noiseLabel(state.mix.noiseType),
-                    state.connected, NoiseType.entries, { noiseLabel(it) }, onSelect)
-                Button(onClick = onPlaybackToggle, enabled = state.connected,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = RainfoldTokens.size56)) {
+            Column(Modifier.safeDrawingPadding().fillMaxSize()) {
+                Column(
+                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+                        .padding(RainfoldTokens.size24),
+                    verticalArrangement = Arrangement.spacedBy(RainfoldTokens.size16),
+                ) {
+                    Text(stringResource(R.string.app_name), style = MaterialTheme.typography.displaySmall)
+                    Text(stringResource(R.string.app_tagline), style = MaterialTheme.typography.bodyMedium)
                     Text(stringResource(when (state.playback) {
-                        is PlaybackState.Playing -> R.string.pause
-                        is PlaybackState.Paused -> R.string.resume
-                        else -> R.string.play
+                        is PlaybackState.Playing -> R.string.playing
+                        is PlaybackState.Paused -> R.string.paused
+                        else -> R.string.ready
                     }))
-                }
-                Text(stringResource(when (state.playback) {
-                    is PlaybackState.Playing -> R.string.playing
-                    is PlaybackState.Paused -> R.string.paused
-                    else -> R.string.ready
-                }))
-                Text(if (remaining == null) stringResource(R.string.no_timer) else {
-                    val total = (remaining.inWholeMilliseconds + 999) / 1000
-                    stringResource(R.string.remaining_time, total / 60, total % 60)
-                })
-                val volumeLabel = stringResource(R.string.volume)
-                Text(stringResource(R.string.volume_percent, (state.mix.noiseVolume * 100).toInt()))
-                Slider(value = state.mix.noiseVolume, onValueChange = onVolumeChange,
-                    enabled = state.connected, modifier = Modifier.fillMaxWidth().semantics { contentDescription = volumeLabel })
-                Box {
-                    TextButton(onClick = { menu = true }, enabled = state.connected && !idle) {
-                        Text(stringResource(R.string.session_actions))
+                    Text(if (remaining == null) stringResource(R.string.no_timer) else {
+                        val total = (remaining.inWholeMilliseconds + 999) / 1000
+                        stringResource(R.string.remaining_time, total / 60, total % 60)
+                    })
+                    LayerCard(noiseLabel(state.mix.noiseType), state.mix.noiseVolume, state.mix.noiseMuted,
+                        state.connected, onVolumeChange, onNoiseMute) {
+                        SettingPicker(stringResource(R.string.sound), noiseLabel(state.mix.noiseType),
+                            state.connected, NoiseType.entries, { noiseLabel(it) }, onSelect)
                     }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.stop_session)) },
-                            onClick = { menu = false; onStop() })
+                    if (state.mix.rainEnabled) {
+                        LayerCard(stringResource(R.string.rain), state.mix.rainVolume, state.mix.rainMuted,
+                            state.connected, onRainVolumeChange, onRainMute, onRemoveRain)
+                    }
+                    OutlinedButton(onClick = { addSound = true }, enabled = state.connected && !state.mix.rainEnabled,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.add_sound))
+                    }
+                    Box {
+                        TextButton(onClick = { menu = true }, enabled = state.connected && !idle) {
+                            Text(stringResource(R.string.session_actions))
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text(stringResource(R.string.stop_session)) },
+                                onClick = { menu = false; onStop() })
+                        }
+                    }
+                    Text(stringResource(R.string.timer), style = MaterialTheme.typography.titleMedium)
+                    if (!idle) Text(stringResource(R.string.settings_after_stop), style = MaterialTheme.typography.bodySmall)
+                    SettingPicker(stringResource(R.string.timer),
+                        state.settings.duration?.let { stringResource(R.string.minutes_value, it.inWholeMinutes) } ?: stringResource(R.string.no_timer),
+                        state.connected && idle, listOf<Duration?>(null, 15.minutes, 30.minutes, 60.minutes, 90.minutes),
+                        { value -> if (value == null) stringResource(R.string.no_timer) else stringResource(R.string.minutes_value, value.inWholeMinutes) },
+                        { onConfigure(state.settings.copy(duration = it)) })
+                    SettingPicker(stringResource(R.string.fade_in), stringResource(R.string.seconds_value, state.settings.fadeIn.inWholeSeconds),
+                        state.connected && idle, listOf(0.seconds, 1.seconds, 5.seconds, 10.seconds, 30.seconds),
+                        { stringResource(R.string.seconds_value, it.inWholeSeconds) },
+                        { onConfigure(state.settings.copy(fadeIn = it)) })
+                    SettingPicker(stringResource(R.string.fade_out), stringResource(R.string.seconds_value, state.settings.fadeOut.inWholeSeconds),
+                        state.connected && idle, listOf(0.seconds, 5.seconds, 10.seconds, 30.seconds, 60.seconds),
+                        { stringResource(R.string.seconds_value, it.inWholeSeconds) },
+                        { onConfigure(state.settings.copy(fadeOut = it)) })
+                    if (state.audioFailed) Text(stringResource(R.string.audio_error), color = MaterialTheme.colorScheme.error)
+                }
+                PlaybackButton(state, onPlaybackToggle, Modifier.padding(RainfoldTokens.size16))
+            }
+            if (addSound) {
+                ModalBottomSheet(onDismissRequest = { addSound = false }) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+                            .padding(RainfoldTokens.size24),
+                            verticalArrangement = Arrangement.spacedBy(RainfoldTokens.size16)) {
+                            Text(stringResource(R.string.environment), style = MaterialTheme.typography.titleLarge)
+                            Text(stringResource(R.string.rain), style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.rain_description))
+                            Text(stringResource(R.string.rain_credit), style = MaterialTheme.typography.bodySmall)
+                            Text(stringResource(R.string.add_sound_hint), style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = { onAddRain(); addSound = false }, enabled = state.connected,
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(stringResource(R.string.add_rain))
+                            }
+                        }
+                        PlaybackButton(state, onPlaybackToggle, Modifier.padding(RainfoldTokens.size16))
                     }
                 }
-                Text(stringResource(R.string.timer), style = MaterialTheme.typography.titleMedium)
-                if (!idle) Text(stringResource(R.string.settings_after_stop), style = MaterialTheme.typography.bodySmall)
-                SettingPicker(stringResource(R.string.timer),
-                    state.settings.duration?.let { stringResource(R.string.minutes_value, it.inWholeMinutes) } ?: stringResource(R.string.no_timer),
-                    state.connected && idle, listOf<Duration?>(null, 15.minutes, 30.minutes, 60.minutes, 90.minutes),
-                    { value -> if (value == null) stringResource(R.string.no_timer) else stringResource(R.string.minutes_value, value.inWholeMinutes) },
-                    { onConfigure(state.settings.copy(duration = it)) })
-                SettingPicker(stringResource(R.string.fade_in), stringResource(R.string.seconds_value, state.settings.fadeIn.inWholeSeconds),
-                    state.connected && idle, listOf(0.seconds, 1.seconds, 5.seconds, 10.seconds, 30.seconds),
-                    { stringResource(R.string.seconds_value, it.inWholeSeconds) },
-                    { onConfigure(state.settings.copy(fadeIn = it)) })
-                SettingPicker(stringResource(R.string.fade_out), stringResource(R.string.seconds_value, state.settings.fadeOut.inWholeSeconds),
-                    state.connected && idle, listOf(0.seconds, 5.seconds, 10.seconds, 30.seconds, 60.seconds),
-                    { stringResource(R.string.seconds_value, it.inWholeSeconds) },
-                    { onConfigure(state.settings.copy(fadeOut = it)) })
-                if (state.audioFailed) Text(stringResource(R.string.audio_error), color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackButton(state: PlaybackScreenState, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Button(onClick = onToggle, enabled = state.connected,
+        modifier = modifier.fillMaxWidth().heightIn(min = RainfoldTokens.size56)) {
+        Text(stringResource(when (state.playback) {
+            is PlaybackState.Playing -> R.string.pause
+            is PlaybackState.Paused -> R.string.resume
+            else -> R.string.play
+        }))
+    }
+}
+
+@Composable
+private fun LayerCard(
+    title: String,
+    volume: Float,
+    muted: Boolean,
+    enabled: Boolean,
+    onVolume: (Float) -> Unit,
+    onMute: () -> Unit,
+    onRemove: (() -> Unit)? = null,
+    content: @Composable () -> Unit = {},
+) {
+    val volumeLabel = stringResource(R.string.layer_volume, title)
+    val muteLabel = stringResource(if (muted) R.string.unmute_layer else R.string.mute_layer, title)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(RainfoldTokens.size16),
+            verticalArrangement = Arrangement.spacedBy(RainfoldTokens.size8)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+            Text("${stringResource(R.string.volume)}: ${stringResource(R.string.volume_percent, (volume * 100).toInt())}")
+            Slider(value = volume, onValueChange = onVolume, enabled = enabled,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = volumeLabel })
+            Row(horizontalArrangement = Arrangement.spacedBy(RainfoldTokens.size8)) {
+                FilterChip(selected = muted, onClick = onMute, enabled = enabled,
+                    label = { Text(stringResource(if (muted) R.string.unmute else R.string.mute)) },
+                    modifier = Modifier.semantics { contentDescription = muteLabel })
+                if (onRemove != null) {
+                    TextButton(onClick = onRemove, enabled = enabled) {
+                        Text(stringResource(R.string.remove_rain))
+                    }
+                }
             }
         }
     }

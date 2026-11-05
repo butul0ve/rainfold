@@ -29,4 +29,18 @@
     <string name="seconds_value">%1$d с</string>
     <string name="fade_in">Плавное начало</string>
     <string name="fade_out">Плавное завершение</string>
+    <string name="rain">Дождь</string>
+    <string name="noise_and_rain">%1$s + дождь</string>
+    <string name="environment">Окружение</string>
+    <string name="rain_description">Одна локальная петля дождя. Её громкость регулируется отдельно от шума.</string>
+    <string name="add_sound">Добавить звук</string>
+    <string name="add_rain">Добавить дождь</string>
+    <string name="remove_rain">Удалить дождь</string>
+    <string name="add_sound_hint">Добавление звука меняет микс. Если сессия остановлена или на паузе, нажмите «Играть» или «Продолжить», чтобы послушать.</string>
+    <string name="mute">Выключить звук</string>
+    <string name="unmute">Включить звук</string>
+    <string name="mute_layer">Выключить слой «%1$s»</string>
+    <string name="unmute_layer">Включить слой «%1$s»</string>
+    <string name="layer_volume">Громкость слоя «%1$s»</string>
+    <string name="rain_credit">Gentle Rain — shelbyshark · Freesound №501243 · CC0 1.0</string>
 </resources>

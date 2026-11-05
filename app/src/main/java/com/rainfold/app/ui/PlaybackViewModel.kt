@@ -14,6 +14,7 @@ import com.rainfold.app.domain.NoiseMix
 import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackState
 import com.rainfold.app.domain.SessionSettings
+import com.rainfold.app.player.readMix
 import com.rainfold.app.player.PlaybackService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,7 +53,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun update(extras: Bundle) {
-        val mix = NoiseMix(NoiseType.valueOf(extras.getString("noise") ?: "PINK"), extras.getFloat("volume", 0.5f))
+        val mix = extras.readMix()
         val remaining = extras.getLong("remaining", -1).takeIf { it >= 0 }?.milliseconds
         mutableState.value = PlaybackScreenState(mix, when (extras.getString("status")) {
             "playing" -> PlaybackState.Playing(mix, remaining)
@@ -67,12 +68,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         controller?.let { if (state.value.playback is PlaybackState.Playing) it.pause() else it.play() }
     }
     fun stop() { controller?.stop() }
-    fun selectNoise(type: NoiseType) = updateMix(state.value.mix.copy(noiseType = type))
-    fun setVolume(volume: Float) = updateMix(state.value.mix.copy(noiseVolume = volume.coerceIn(0f, 1f)))
-    private fun updateMix(mix: NoiseMix) = send(Bundle().apply {
-        putString("noise", mix.noiseType.name)
-        putFloat("volume", mix.noiseVolume)
-    })
+    fun selectNoise(type: NoiseType) = send(Bundle().apply { putString("noise", type.name) })
+    fun setVolume(volume: Float) = send(Bundle().apply { putFloat("volume", volume.coerceIn(0f, 1f)) })
+    fun setRainVolume(volume: Float) = send(Bundle().apply { putFloat("rainVolume", volume.coerceIn(0f, 1f)) })
+    fun toggleNoiseMute() = send(Bundle().apply { putBoolean("noiseMuted", !state.value.mix.noiseMuted) })
+    fun toggleRainMute() = send(Bundle().apply { putBoolean("rainMuted", !state.value.mix.rainMuted) })
+    fun addRain() = send(Bundle().apply { putBoolean("rainEnabled", true) })
+    fun removeRain() = send(Bundle().apply { putBoolean("rainEnabled", false) })
     fun configure(settings: SessionSettings) = send(Bundle().apply {
         putLong("duration", settings.duration?.inWholeMilliseconds ?: 0)
         putLong("fadeIn", settings.fadeIn.inWholeMilliseconds)

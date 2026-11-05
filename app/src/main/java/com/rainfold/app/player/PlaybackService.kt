@@ -30,17 +30,18 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.rainfold.app.MainActivity
 import com.rainfold.app.R
 import com.rainfold.app.domain.AudioFocusPolicy
-import com.rainfold.app.domain.NoiseMix
+import com.rainfold.app.domain.MixPreferences
 import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackCommand
 import com.rainfold.app.domain.PlaybackSession
 import com.rainfold.app.domain.PlaybackState
 import com.rainfold.app.domain.SessionSettings
+import com.rainfold.app.dsp.PcmWave
 import kotlin.time.Duration.Companion.milliseconds
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
-    private val engine = NoisePlayer()
+    private val engine by lazy { NoisePlayer { assets.open("rain.wav").use { PcmWave.read(it) } } }
     private val clockSession = PlaybackSession { SystemClock.elapsedRealtime().milliseconds }
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var adapter: SessionPlayer
@@ -75,17 +76,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val type = runCatching {
-            NoiseType.valueOf(
-                preferences.getString(
-                    "noise",
-                    "PINK"
-                )!!
-            )
-        }.getOrDefault(NoiseType.PINK)
-        val volume =
-            preferences.getFloat("volume", 0.5f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f
-        clockSession.dispatch(PlaybackCommand.UpdateMix(NoiseMix(type, volume)))
+        clockSession.dispatch(PlaybackCommand.UpdateMix(MixPreferences.decode(preferences.all)))
         clockSession.configure(
             SessionSettings(
                 preferences.getLong("duration", 0).takeIf { it > 0 }?.milliseconds,
@@ -157,17 +148,9 @@ class PlaybackService : MediaSessionService() {
                         SessionResult(SessionError.ERROR_NOT_SUPPORTED)
                     )
                     return try {
-                        if (args.containsKey("noise")) dispatch(
-                            PlaybackCommand.UpdateMix(
-                                clockSession.mix.copy(
-                                    noiseType = NoiseType.valueOf(requireNotNull(args.getString("noise"))),
-                                    noiseVolume = args.getFloat(
-                                        "volume",
-                                        clockSession.mix.noiseVolume
-                                    )
-                                )
-                            )
-                        )
+                        if (MixPreferences.encode(clockSession.mix).keys.any(args::containsKey)) {
+                            dispatch(PlaybackCommand.UpdateMix(args.readMix(clockSession.mix)))
+                        }
                         if (args.containsKey("duration")) dispatch(
                             PlaybackCommand.Configure(
                                 SessionSettings(
@@ -286,8 +269,15 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun saveSettings() {
-        preferences.edit().putString("noise", clockSession.mix.noiseType.name)
-            .putFloat("volume", clockSession.mix.noiseVolume)
+        val edit = preferences.edit()
+        MixPreferences.encode(clockSession.mix).forEach { (key, value) ->
+            when (value) {
+                is String -> edit.putString(key, value)
+                is Float -> edit.putFloat(key, value)
+                is Boolean -> edit.putBoolean(key, value)
+            }
+        }
+        edit
             .putLong("duration", clockSession.settings.duration?.inWholeMilliseconds ?: 0)
             .putLong("fadeIn", clockSession.settings.fadeIn.inWholeMilliseconds)
             .putLong("fadeOut", clockSession.settings.fadeOut.inWholeMilliseconds).apply()
@@ -297,8 +287,7 @@ class PlaybackService : MediaSessionService() {
         adapter.refresh()
         val state = clockSession.state()
         mediaSession?.setSessionExtras(Bundle().apply {
-            putString("noise", clockSession.mix.noiseType.name)
-            putFloat("volume", clockSession.mix.noiseVolume)
+            putMix(clockSession.mix)
             putString(
                 "status", when (state) {
                     is PlaybackState.Playing -> "playing"; is PlaybackState.Paused -> "paused"; else -> "idle"
@@ -338,13 +327,16 @@ class PlaybackService : MediaSessionService() {
         fun refresh() = invalidateState()
         override fun getState(): State {
             val playback = clockSession.state()
-            val title = getString(
+            val noiseTitle = getString(
                 when (clockSession.mix.noiseType) {
                     NoiseType.WHITE -> R.string.white_noise
                     NoiseType.PINK -> R.string.pink_noise
                     NoiseType.BROWN -> R.string.brown_noise
                 }
             )
+            val title = if (clockSession.mix.rainEnabled) {
+                getString(R.string.noise_and_rain, noiseTitle)
+            } else noiseTitle
             return State.Builder().setAvailableCommands(
                 Player.Commands.Builder().addAll(
                     Player.COMMAND_PLAY_PAUSE, Player.COMMAND_PREPARE, Player.COMMAND_STOP,

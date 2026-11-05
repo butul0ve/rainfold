@@ -8,14 +8,11 @@ import android.os.SystemClock
 import android.util.Log
 import com.rainfold.app.BuildConfig
 import com.rainfold.app.domain.NoiseMix
-import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.dsp.AudioLimiter
-import com.rainfold.app.dsp.BrownNoiseGenerator
 import com.rainfold.app.dsp.GainRamp
-import com.rainfold.app.dsp.NoiseGenerator
-import com.rainfold.app.dsp.PinkNoiseGenerator
 import com.rainfold.app.dsp.SessionFade
-import com.rainfold.app.dsp.WhiteNoiseGenerator
+import com.rainfold.app.dsp.SeamlessLoop
+import com.rainfold.app.dsp.SoundLayerMixer
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
@@ -29,12 +26,14 @@ class NoisePlayer internal constructor(
     private val elapsedRealtime: () -> Long,
     private val prepareThread: () -> Unit,
     private val logFailure: (RuntimeException) -> Unit,
+    private val loadRain: () -> FloatArray,
 ) {
-    constructor() : this(
+    constructor(loadRain: () -> FloatArray) : this(
         ::createAudioOutput,
         SystemClock::elapsedRealtime,
         { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) },
         { error -> if (BuildConfig.DEBUG) Log.e("RainfoldAudio", "Renderer failed", error) },
+        loadRain,
     )
 
     private data class Target(
@@ -74,14 +73,12 @@ class NoisePlayer internal constructor(
             var failure: RuntimeException? = null
             try {
                 prepareThread()
+                val mixer = SoundLayerMixer(SeamlessLoop(loadRain(), SAMPLE_RATE / 2))
                 track = createOutput()
                 audioTrack = track
-                val generators = NoiseType.entries.map(::generatorFor).toTypedArray()
-                val weights = Array(generators.size) { GainRamp() }
                 var lastDiagnostic = elapsedRealtime()
                 var maxRenderNs = 0L
                 val envelope = GainRamp()
-                val volume = GainRamp(mix.noiseVolume)
                 var previous: Target? = null
                 val buffer = FloatArray(BUFFER_FRAMES)
                 track.play()
@@ -96,15 +93,7 @@ class NoisePlayer internal constructor(
                         if (previous == null || next.gain != previous.gain || restartAfterExpiry) {
                             envelope.moveTo(next.gain, (next.rampMs * SAMPLE_RATE / 1000).toInt())
                         }
-                        volume.moveTo(next.mix.noiseVolume, SAMPLE_RATE / 30)
-                        if (previous?.mix?.noiseType != next.mix.noiseType) {
-                            weights.forEachIndexed { index, ramp ->
-                                ramp.moveTo(
-                                    if (index == next.mix.noiseType.ordinal) 1f else 0f,
-                                    SAMPLE_RATE / 20
-                                )
-                            }
-                        }
+                        mixer.update(next.mix)
                         previous = next
                     }
                     val remaining = next.deadlineMs?.minus(now)
@@ -112,12 +101,9 @@ class NoisePlayer internal constructor(
                         val timedGain = SessionFade.gain(
                             remaining?.let { it - index * 1000.0 / SAMPLE_RATE }, next.fadeOutMs,
                         )
-                        var sample = 0f
-                        for (source in generators.indices) {
-                            sample += generators[source].nextSample() * weights[source].next()
-                        }
-                        buffer[index] =
-                            AudioLimiter.limit(sample * volume.next() * envelope.next() * timedGain * 0.8f)
+                        buffer[index] = AudioLimiter.limit(
+                            mixer.nextSample() * envelope.next() * timedGain
+                        )
                     }
                     if (BuildConfig.DEBUG) {
                         maxRenderNs = maxOf(maxRenderNs, System.nanoTime() - renderStart)
@@ -141,8 +127,8 @@ class NoisePlayer internal constructor(
                         offset += written
                     }
                 }
-            } catch (error: RuntimeException) {
-                failure = error
+            } catch (error: Exception) {
+                failure = error as? RuntimeException ?: IllegalStateException("Audio initialization failed", error)
             } finally {
                 try {
                     track?.release()
@@ -179,12 +165,6 @@ class NoisePlayer internal constructor(
         renderThread?.join()
         renderThread = null
         audioTrack = null
-    }
-
-    private fun generatorFor(type: NoiseType): NoiseGenerator = when (type) {
-        NoiseType.WHITE -> WhiteNoiseGenerator()
-        NoiseType.PINK -> PinkNoiseGenerator()
-        NoiseType.BROWN -> BrownNoiseGenerator()
     }
 }
 

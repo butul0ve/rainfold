@@ -29,4 +29,18 @@
     <string name="seconds_value">%1$d s</string>
     <string name="fade_in">Fade in</string>
     <string name="fade_out">Fade out</string>
+    <string name="rain">Rain</string>
+    <string name="noise_and_rain">%1$s + rain</string>
+    <string name="environment">Environment</string>
+    <string name="rain_description">One offline rain loop. Adjust its volume separately from the noise.</string>
+    <string name="add_sound">Add sound</string>
+    <string name="add_rain">Add rain</string>
+    <string name="remove_rain">Remove rain</string>
+    <string name="add_sound_hint">Adding a sound changes the mix. When stopped or paused, press Play or Resume to listen.</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="mute_layer">Mute %1$s</string>
+    <string name="unmute_layer">Unmute %1$s</string>
+    <string name="layer_volume">%1$s volume</string>
+    <string name="rain_credit">Gentle Rain — shelbyshark · Freesound #501243 · CC0 1.0</string>
 </resources>
