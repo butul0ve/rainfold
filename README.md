@@ -2,7 +2,7 @@
 
 **Endless soundscapes for sleep and focus.**
 
-Rainfold is an offline Android noise player for white, pink and brown noise. The stage 1 implementation adds background playback, system media controls, Play/Pause/Resume, a sleep timer and smooth transitions. Release acceptance still requires the device checks below; see [ROADMAP.md](ROADMAP.md).
+Rainfold is an offline Android noise player for white, pink and brown noise. Current app version: `0.1.0` (version code 1), with Android 8.0/API 26 as the minimum platform and API 36 as the target. The stage 1 player is implemented: background playback, system media controls, Play/Pause/Resume/Stop, a sleep timer and smooth transitions. Device acceptance remains open; see [ROADMAP.md](ROADMAP.md) for the verified smoke check and remaining coverage.
 
 ## Playback
 
