@@ -46,6 +46,8 @@ import androidx.compose.ui.platform.LocalContext
 import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackState
 import com.rainfold.app.domain.SessionSettings
+import com.rainfold.app.domain.SessionMode
+import com.rainfold.app.reminders.ReminderSettings
 import com.rainfold.app.localization.AppLanguage
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -70,6 +72,8 @@ fun RainfoldScreen(
     currentLanguage: AppLanguage,
     languageSelectionRequired: Boolean,
     onLanguageSelected: (AppLanguage) -> Unit,
+    onModeSelected: (SessionMode) -> Unit,
+    onReminderChanged: (ReminderSettings) -> Unit,
 ) {
     var menu by rememberSaveable { mutableStateOf(false) }
     var addSound by rememberSaveable { mutableStateOf(false) }
@@ -79,14 +83,11 @@ fun RainfoldScreen(
     var languageDialog by rememberSaveable { mutableStateOf(false) }
     val selectedScene = state.library.selected
     val idle = state.playback is PlaybackState.Idle
-    val remaining = when (val playback = state.playback) {
-        is PlaybackState.Playing -> playback.remaining
-        is PlaybackState.Paused -> playback.remaining
-        else -> state.settings.duration
-    }
     RainfoldTheme(darkTheme = isSystemInDarkTheme(), amoled = state.amoled) {
-        val sleeping = selectedScene?.purpose == ScenePurpose.SLEEP && state.playback is PlaybackState.Playing
-        val tint = if (selectedScene?.purpose == ScenePurpose.FOCUS) MaterialTheme.colorScheme.tertiaryContainer
+        val sleeping = (state.settings.mode == SessionMode.SLEEP ||
+            (state.settings.mode == SessionMode.CUSTOM && selectedScene?.purpose == ScenePurpose.SLEEP)) && state.playback is PlaybackState.Playing
+        val tint = if (state.settings.mode == SessionMode.FOCUS ||
+            (state.settings.mode == SessionMode.CUSTOM && selectedScene?.purpose == ScenePurpose.FOCUS)) MaterialTheme.colorScheme.tertiaryContainer
             else MaterialTheme.colorScheme.primaryContainer
         val backdrop = if (state.amoled) Modifier else Modifier.background(Brush.verticalGradient(listOf(
             tint.copy(alpha = if (sleeping) 0.12f else 0.35f), MaterialTheme.colorScheme.surface,
@@ -114,10 +115,8 @@ fun RainfoldScreen(
                         is PlaybackState.Paused -> R.string.paused
                         else -> R.string.ready
                     }))
-                    Text(if (remaining == null) stringResource(R.string.no_timer) else {
-                        val total = (remaining.inWholeMilliseconds + 999) / 1000
-                        stringResource(R.string.remaining_time, total / 60, total % 60)
-                    })
+                    Text(sessionTimeLabel(state))
+                    SessionModeControls(state, onModeSelected, onPlaybackToggle, onStop)
                     LayerCard(noiseLabel(state.mix.noiseType), state.mix.noiseVolume, state.mix.noiseMuted,
                         state.connected, onVolumeChange, onNoiseMute) {
                         SettingPicker(stringResource(R.string.sound), noiseLabel(state.mix.noiseType),
@@ -176,11 +175,13 @@ fun RainfoldScreen(
                         verticalArrangement = Arrangement.spacedBy(RainfoldTokens.size16)) {
                         Text(stringResource(R.string.timer), style = MaterialTheme.typography.titleMedium)
                         if (!idle) Text(stringResource(R.string.settings_after_stop), style = MaterialTheme.typography.bodySmall)
+                        ModeTimerSettings(state, onConfigure, onReminderChanged)
                         SettingPicker(stringResource(R.string.timer),
-                            state.settings.duration?.let { stringResource(R.string.minutes_value, it.inWholeMinutes) } ?: stringResource(R.string.no_timer),
-                            state.connected && idle, listOf<Duration?>(null, 15.minutes, 30.minutes, 60.minutes, 90.minutes),
+                            state.settings.endAtMinute?.let { stringResource(R.string.end_at_value, it / 60, it % 60) }
+                                ?: state.settings.duration?.let { stringResource(R.string.minutes_value, it.inWholeMinutes) } ?: stringResource(R.string.no_timer),
+                            state.connected && idle, listOf<Duration?>(null, 15.minutes, 25.minutes, 30.minutes, 50.minutes, 60.minutes, 90.minutes),
                             { value -> if (value == null) stringResource(R.string.no_timer) else stringResource(R.string.minutes_value, value.inWholeMinutes) },
-                            { onConfigure(state.settings.copy(duration = it)) })
+                            { onConfigure(state.settings.copy(duration = it, endAtMinute = null)) })
                         SettingPicker(stringResource(R.string.fade_in), stringResource(R.string.seconds_value, state.settings.fadeIn.inWholeSeconds),
                             state.connected && idle, listOf(0.seconds, 1.seconds, 5.seconds, 10.seconds, 30.seconds),
                             { stringResource(R.string.seconds_value, it.inWholeSeconds) },
@@ -265,7 +266,7 @@ private fun LayerCard(
 }
 
 @Composable
-private fun <T> SettingPicker(
+internal fun <T> SettingPicker(
     label: String,
     value: String,
     enabled: Boolean,

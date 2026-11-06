@@ -12,6 +12,48 @@ import org.junit.Test
 
 class NoisePlayerTest {
     @Test
+    fun `sleep rain envelope and completion cue render through one output and end in silence`() {
+        val output = FakeOutput()
+        val now = AtomicLong()
+        val creations = AtomicInteger()
+        val player = NoisePlayer({ creations.incrementAndGet(); output }, now::get, {}, {}, { FloatArray(48_000) { 0.5f } })
+        val mix = NoiseMix(noiseMuted = true, rainEnabled = true, rainVolume = 1f)
+        try {
+            player.play(mix, 30, deadline = 1000, fadeOutMs = 1000, sequentialFade = true) {}
+            repeat(6) {
+                output.writes.await()
+                output.buffers.await()
+                output.results.add(512)
+            }
+            output.writes.await()
+            assertEquals(0.2f, output.buffers.await().first(), 0.00001f)
+            now.set(250)
+            output.results.add(512)
+            output.writes.await()
+            assertEquals(0.1f, output.buffers.await().first(), 0.00001f)
+            now.set(500)
+            output.results.add(512)
+            output.writes.await()
+            assertTrue(output.buffers.await().all { it == 0f })
+            now.set(1000)
+            player.playCompletionCue()
+            output.results.add(512)
+            output.writes.await()
+            val cue = output.buffers.await()
+            assertTrue(cue.any { it != 0f })
+            assertTrue(cue.all { kotlin.math.abs(it) <= com.rainfold.app.dsp.CompletionCue.PEAK })
+            now.set(1600)
+            output.results.add(512)
+            output.writes.await()
+            assertTrue(output.buffers.await().all { it == 0f })
+            assertEquals(1, creations.get())
+        } finally {
+            player.stop()
+        }
+        assertEquals(1, output.releases.get())
+    }
+
+    @Test
     fun `rapid stop play restarts fade before renderer observes silence`() {
         val output = FakeOutput()
         val player = player { output }

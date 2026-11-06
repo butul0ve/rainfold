@@ -40,11 +40,11 @@ class SoundLayerMixer(
     }
 
     /** Fixed per-layer headroom avoids changing the noise level when rain is added or muted. */
-    fun nextSample(): Float {
+    fun nextSample(noiseEnvelope: Float = 1f, rainEnvelope: Float = 1f): Float {
         var base = 0f
         for (index in noise.indices) base += noise[index].nextSample() * weights[index].next()
         // Advance even inaudible sources, so adding/unmuting never restarts a loop.
-        return (base * noiseGain.next() + rain.nextSample() * rainGain.next()) * LAYER_HEADROOM
+        return (base * noiseGain.next() * noiseEnvelope + rain.nextSample() * rainGain.next() * rainEnvelope) * LAYER_HEADROOM
     }
 
     companion object {
