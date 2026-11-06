@@ -24,6 +24,8 @@ sealed interface PlaybackCommand {
     data class UpdateMix(val mix: NoiseMix) : PlaybackCommand
 }
 
+data class PlaybackTransition(val previous: PlaybackState, val next: PlaybackState)
+
 /** Clock must be monotonic; paused time does not count toward the session. */
 class PlaybackSession(private val now: () -> Duration) {
     var mix: NoiseMix = NoiseMix()
@@ -34,13 +36,19 @@ class PlaybackSession(private val now: () -> Duration) {
     private var elapsed = Duration.ZERO
     private var startedAt = Duration.ZERO
 
+    /** Absolute monotonic deadline, shared with the renderer without adding command setup time. */
+    val deadline: Duration?
+        get() = if (status == Status.PLAYING) settings.duration?.let { startedAt + it - elapsed } else null
+
     fun configure(settings: SessionSettings) {
         check(status == Status.IDLE)
         this.settings = settings
     }
 
-    fun state(): PlaybackState {
-        val played = elapsed + if (status == Status.PLAYING) now() - startedAt else Duration.ZERO
+    fun state(): PlaybackState = state(now())
+
+    private fun state(at: Duration): PlaybackState {
+        val played = elapsed + if (status == Status.PLAYING) at - startedAt else Duration.ZERO
         val remaining = settings.duration?.let { (it - played).coerceAtLeast(Duration.ZERO) }
         if (status == Status.PLAYING && remaining == Duration.ZERO) status = Status.IDLE
         return when (status) {
@@ -50,24 +58,28 @@ class PlaybackSession(private val now: () -> Duration) {
         }
     }
 
-    fun dispatch(command: PlaybackCommand): PlaybackState {
-        state()
+    fun dispatch(command: PlaybackCommand): PlaybackState = transition(command).next
+
+    /** Expiry and the command share one clock reading, including at the exact deadline. */
+    fun transition(command: PlaybackCommand): PlaybackTransition {
+        val at = now()
+        val previous = state(at)
         when (command) {
             is PlaybackCommand.Configure -> if (status == Status.IDLE) configure(command.settings)
 
             PlaybackCommand.Play -> if (status == Status.IDLE) {
                 elapsed = Duration.ZERO
-                startedAt = now()
+                startedAt = at
                 status = Status.PLAYING
             }
 
             PlaybackCommand.Pause -> if (status == Status.PLAYING) {
-                elapsed += now() - startedAt
+                elapsed += at - startedAt
                 status = Status.PAUSED
             }
 
             PlaybackCommand.Resume -> if (status == Status.PAUSED) {
-                startedAt = now()
+                startedAt = at
                 status = Status.PLAYING
             }
 
@@ -78,7 +90,7 @@ class PlaybackSession(private val now: () -> Duration) {
 
             is PlaybackCommand.UpdateMix -> mix = command.mix
         }
-        return state()
+        return PlaybackTransition(previous, state(at))
     }
 
     private enum class Status { IDLE, PLAYING, PAUSED }

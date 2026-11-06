@@ -143,4 +143,79 @@ class PlaybackSessionTest {
         assertNull(session.settings.duration)
     }
 
+    @Test
+    fun `play at expiry reports a fresh start even when the previous snapshot was playing`() {
+        session.configure(SessionSettings(duration = 1.seconds))
+        session.dispatch(PlaybackCommand.Play)
+        assertTrue(session.state() is PlaybackState.Playing)
+        now += 1.seconds
+        val transition = session.transition(PlaybackCommand.Play)
+        assertEquals(PlaybackState.Idle, transition.previous)
+        assertEquals(PlaybackState.Playing(session.mix, 1.seconds), transition.next)
+    }
+
+    @Test
+    fun `commands at the deadline cannot leave a zero duration paused session`() {
+        listOf(
+            PlaybackCommand.Pause, PlaybackCommand.Resume, PlaybackCommand.Stop,
+            PlaybackCommand.UpdateMix(NoiseMix(NoiseType.BROWN)),
+        ).forEach { command ->
+            session.configure(SessionSettings(duration = 1.seconds))
+            session.dispatch(PlaybackCommand.Play)
+            now += 1.seconds
+            assertEquals(
+                PlaybackTransition(PlaybackState.Idle, PlaybackState.Idle),
+                session.transition(command),
+            )
+        }
+    }
+
+    @Test
+    fun `one command reads the monotonic clock once even if time advances on each reading`() {
+        var readings = 0
+        val advancing = PlaybackSession { readings++.seconds }
+        advancing.configure(SessionSettings(duration = 1.seconds))
+        assertEquals(
+            PlaybackTransition(PlaybackState.Idle, PlaybackState.Playing(advancing.mix, 1.seconds)),
+            advancing.transition(PlaybackCommand.Play),
+        )
+        assertEquals(1, readings)
+        assertEquals(
+            PlaybackTransition(PlaybackState.Idle, PlaybackState.Playing(advancing.mix, 1.seconds)),
+            advancing.transition(PlaybackCommand.Play),
+        )
+        assertEquals(2, readings)
+    }
+
+    @Test
+    fun `rapid pause resume stop and resume after stop never resurrect elapsed playback`() {
+        session.configure(SessionSettings(duration = 60.seconds))
+        session.dispatch(PlaybackCommand.Play)
+        now += 20.seconds
+        repeat(20) {
+            session.dispatch(PlaybackCommand.Pause)
+            session.dispatch(PlaybackCommand.Resume)
+        }
+        assertEquals(PlaybackState.Playing(session.mix, 40.seconds), session.state())
+        session.dispatch(PlaybackCommand.Stop)
+        assertEquals(PlaybackState.Idle, session.dispatch(PlaybackCommand.Resume))
+        assertEquals(PlaybackState.Playing(session.mix, 60.seconds), session.dispatch(PlaybackCommand.Play))
+    }
+
+    @Test
+    fun `absolute renderer deadline excludes pauses and does not slide with observation time`() {
+        session.configure(SessionSettings(duration = 60.seconds))
+        session.dispatch(PlaybackCommand.Play)
+        assertEquals(70.seconds, session.deadline)
+        now += 20.seconds
+        assertEquals(70.seconds, session.deadline)
+        session.dispatch(PlaybackCommand.Pause)
+        assertNull(session.deadline)
+        now += 2.hours
+        session.dispatch(PlaybackCommand.Resume)
+        assertEquals(now + 40.seconds, session.deadline)
+        session.dispatch(PlaybackCommand.Stop)
+        assertNull(session.deadline)
+    }
+
 }

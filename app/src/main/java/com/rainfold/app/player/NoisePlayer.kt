@@ -20,34 +20,65 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
+private const val SAMPLE_RATE = 48_000
+private const val BUFFER_FRAMES = 512
+
 /** One render thread owns and releases AudioTrack. Playback transitions are scheduled by the service. */
-class NoisePlayer {
-    private data class Target(val mix: NoiseMix, val gain: Float, val rampMs: Long)
+class NoisePlayer internal constructor(
+    private val createOutput: () -> AudioOutput,
+    private val elapsedRealtime: () -> Long,
+    private val prepareThread: () -> Unit,
+    private val logFailure: (RuntimeException) -> Unit,
+) {
+    constructor() : this(
+        ::createAudioOutput,
+        SystemClock::elapsedRealtime,
+        { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) },
+        { error -> if (BuildConfig.DEBUG) Log.e("RainfoldAudio", "Renderer failed", error) },
+    )
+
+    private data class Target(
+        val mix: NoiseMix,
+        val gain: Float,
+        val rampMs: Long,
+        val deadlineMs: Long? = null,
+        val fadeOutMs: Long = 30,
+        val playId: Long = 0,
+    )
 
     private val target = AtomicReference(Target(NoiseMix(), 0f, 30))
     private val running = AtomicBoolean(false)
     private val errorCallback = AtomicReference<(() -> Unit)?>(null)
     private var renderThread: Thread? = null
     @Volatile
-    private var audioTrack: AudioTrack? = null
-    @Volatile
-    private var deadlineMs: Long? = null
-    @Volatile
-    private var fadeOutMs = 0L
+    private var audioTrack: AudioOutput? = null
 
-    fun play(mix: NoiseMix, fadeMs: Long, onError: () -> Unit) {
+    fun play(
+        mix: NoiseMix,
+        fadeMs: Long,
+        deadline: Long? = null,
+        fadeOutMs: Long = 0,
+        onError: () -> Unit,
+    ) {
         errorCallback.set(onError)
-        target.set(Target(mix, 1f, fadeMs.coerceAtLeast(30)))
+        // Publish the deadline and playback target together, including when reusing a live output.
+        target.set(
+            Target(
+                mix, 1f, fadeMs.coerceAtLeast(30), deadline,
+                fadeOutMs.coerceAtLeast(30), target.get().playId + 1,
+            )
+        )
         if (running.getAndSet(true)) return
         renderThread = thread(name = "RainfoldAudio", isDaemon = true) {
-            Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
-            var track: AudioTrack? = null
+            var track: AudioOutput? = null
+            var failure: RuntimeException? = null
             try {
-                track = createTrack()
+                prepareThread()
+                track = createOutput()
                 audioTrack = track
                 val generators = NoiseType.entries.map(::generatorFor).toTypedArray()
                 val weights = Array(generators.size) { GainRamp() }
-                var lastDiagnostic = SystemClock.elapsedRealtime()
+                var lastDiagnostic = elapsedRealtime()
                 var maxRenderNs = 0L
                 val envelope = GainRamp()
                 val volume = GainRamp(mix.noiseVolume)
@@ -57,8 +88,12 @@ class NoisePlayer {
                 while (running.get()) {
                     val renderStart = if (BuildConfig.DEBUG) System.nanoTime() else 0L
                     val next = target.get()
+                    val now = elapsedRealtime()
                     if (next !== previous) {
-                        if (previous == null || next.gain != previous.gain) {
+                        val restartAfterExpiry = previous != null && next.playId != previous.playId &&
+                            previous.deadlineMs?.let { it <= now } == true
+                        if (restartAfterExpiry) envelope.moveTo(0f, 0)
+                        if (previous == null || next.gain != previous.gain || restartAfterExpiry) {
                             envelope.moveTo(next.gain, (next.rampMs * SAMPLE_RATE / 1000).toInt())
                         }
                         volume.moveTo(next.mix.noiseVolume, SAMPLE_RATE / 30)
@@ -72,10 +107,10 @@ class NoisePlayer {
                         }
                         previous = next
                     }
-                    val remaining = deadlineMs?.minus(SystemClock.elapsedRealtime())
+                    val remaining = next.deadlineMs?.minus(now)
                     buffer.indices.forEach { index ->
                         val timedGain = SessionFade.gain(
-                            remaining?.let { it - index * 1000.0 / SAMPLE_RATE }, fadeOutMs,
+                            remaining?.let { it - index * 1000.0 / SAMPLE_RATE }, next.fadeOutMs,
                         )
                         var sample = 0f
                         for (source in generators.indices) {
@@ -86,12 +121,12 @@ class NoisePlayer {
                     }
                     if (BuildConfig.DEBUG) {
                         maxRenderNs = maxOf(maxRenderNs, System.nanoTime() - renderStart)
-                        if (SystemClock.elapsedRealtime() - lastDiagnostic >= 10_000) {
+                        if (elapsedRealtime() - lastDiagnostic >= 10_000) {
                             Log.d(
                                 "RainfoldAudio",
                                 "underruns=${track.underrunCount}, bufferFrames=${track.bufferSizeInFrames}, maxRenderUs=${maxRenderNs / 1000}"
                             )
-                            lastDiagnostic = SystemClock.elapsedRealtime()
+                            lastDiagnostic = elapsedRealtime()
                             maxRenderNs = 0
                         }
                     }
@@ -101,30 +136,33 @@ class NoisePlayer {
                             buffer,
                             offset,
                             buffer.size - offset,
-                            AudioTrack.WRITE_BLOCKING
                         )
                         check(written > 0) { "AudioTrack write failed: $written" }
                         offset += written
                     }
                 }
             } catch (error: RuntimeException) {
-                if (BuildConfig.DEBUG) Log.e("RainfoldAudio", "Renderer failed", error)
-                if (running.get()) errorCallback.get()?.invoke()
+                failure = error
             } finally {
-                track?.release()
+                try {
+                    track?.release()
+                } catch (error: RuntimeException) {
+                    if (failure == null) failure = error
+                }
                 audioTrack = null
-                running.set(false)
+                val reportFailure = running.getAndSet(false)
+                failure?.let { error ->
+                    if (reportFailure) {
+                        logFailure(error)
+                        errorCallback.get()?.invoke()
+                    }
+                }
             }
         }
     }
 
     fun update(mix: NoiseMix) {
-        target.set(target.get().copy(mix = mix, rampMs = 30))
-    }
-
-    fun setDeadline(deadline: Long?, fadeMs: Long) {
-        fadeOutMs = fadeMs.coerceAtLeast(30)
-        deadlineMs = deadline
+        target.set(target.get().copy(mix = mix))
     }
 
     fun fadeToSilence(): Long {
@@ -143,13 +181,35 @@ class NoisePlayer {
         audioTrack = null
     }
 
-    private fun createTrack(): AudioTrack {
+    private fun generatorFor(type: NoiseType): NoiseGenerator = when (type) {
+        NoiseType.WHITE -> WhiteNoiseGenerator()
+        NoiseType.PINK -> PinkNoiseGenerator()
+        NoiseType.BROWN -> BrownNoiseGenerator()
+    }
+}
+
+/** The renderer can exercise writes and cleanup in JVM tests without Android resources. */
+internal interface AudioOutput {
+    val bufferSizeInFrames: Int
+    val underrunCount: Int
+    fun play()
+    fun write(buffer: FloatArray, offset: Int, size: Int): Int
+    fun pause()
+    fun release()
+}
+
+private fun createAudioOutput(): AudioOutput = AndroidAudioOutput()
+
+private class AndroidAudioOutput : AudioOutput {
+    private val track: AudioTrack
+
+    init {
         val minBuffer = AudioTrack.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_FLOAT
         )
-        return AudioTrack.Builder()
+        track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
@@ -163,14 +223,11 @@ class NoisePlayer {
             .setTransferMode(AudioTrack.MODE_STREAM).build()
     }
 
-    private fun generatorFor(type: NoiseType): NoiseGenerator = when (type) {
-        NoiseType.WHITE -> WhiteNoiseGenerator()
-        NoiseType.PINK -> PinkNoiseGenerator()
-        NoiseType.BROWN -> BrownNoiseGenerator()
-    }
-
-    private companion object {
-        const val SAMPLE_RATE = 48_000
-        const val BUFFER_FRAMES = 512
-    }
+    override val bufferSizeInFrames: Int get() = track.bufferSizeInFrames
+    override val underrunCount: Int get() = track.underrunCount
+    override fun play() = track.play()
+    override fun write(buffer: FloatArray, offset: Int, size: Int): Int =
+        track.write(buffer, offset, size, AudioTrack.WRITE_BLOCKING)
+    override fun pause() = track.pause()
+    override fun release() = track.release()
 }

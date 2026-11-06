@@ -29,6 +29,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.rainfold.app.MainActivity
 import com.rainfold.app.R
+import com.rainfold.app.domain.AudioFocusPolicy
 import com.rainfold.app.domain.NoiseMix
 import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackCommand
@@ -47,10 +48,15 @@ class PlaybackService : MediaSessionService() {
     private lateinit var audioManager: AudioManager
     private lateinit var focusRequest: AudioFocusRequest
     private lateinit var wakeLock: PowerManager.WakeLock
-    private var resumeOnFocus = false
+    private val focusPolicy = AudioFocusPolicy()
     private var hasFocus = false
+    private var focusRequested = false
+    // A domain snapshot can expire before the renderer has been told to stop.
+    private var playbackActive = false
     private var failed = false
-    private var generation = 0
+    private var releaseGeneration = 0
+    // Pause/Resume cancels a pending release, but must not discard renderer failures.
+    private var rendererGeneration = 0
     private val preferences by lazy { getSharedPreferences("playback", MODE_PRIVATE) }
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -100,21 +106,23 @@ class PlaybackService : MediaSessionService() {
             )
             .setWillPauseWhenDucked(true)
             .setOnAudioFocusChangeListener({ change ->
+                if (!focusRequested) return@setOnAudioFocusChangeListener
                 when (change) {
                     AudioManager.AUDIOFOCUS_GAIN -> {
                         hasFocus = true
-                        if (resumeOnFocus) dispatch(PlaybackCommand.Resume)
-                        resumeOnFocus = false
+                        if (focusPolicy.onGain()) dispatch(PlaybackCommand.Resume)
                     }
 
-                    else -> {
-                        val wasPlaying = clockSession.state() is PlaybackState.Playing
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                        focusPolicy.onTransientLoss(clockSession.state() is PlaybackState.Playing)
                         hasFocus = false
-                        dispatch(
-                            PlaybackCommand.Pause,
-                            abandonFocus = change == AudioManager.AUDIOFOCUS_LOSS
-                        )
-                        resumeOnFocus = wasPlaying && change != AudioManager.AUDIOFOCUS_LOSS
+                        dispatch(PlaybackCommand.Pause, abandonFocus = false)
+                    }
+
+                    AudioManager.AUDIOFOCUS_LOSS -> {
+                        hasFocus = false
+                        dispatch(PlaybackCommand.Pause)
                     }
                 }
             }, handler).build()
@@ -182,12 +190,11 @@ class PlaybackService : MediaSessionService() {
         mediaSession
 
     private fun dispatch(command: PlaybackCommand, abandonFocus: Boolean = true) {
-        val previous = clockSession.state()
-        if (abandonFocus) resumeOnFocus = false
+        if (abandonFocus) focusPolicy.onUserCommand(command)
         failed = false
         try {
-            val starting = (command == PlaybackCommand.Play && previous is PlaybackState.Idle) ||
-                (command == PlaybackCommand.Resume && previous is PlaybackState.Paused)
+            val (previous, next) = clockSession.transition(command)
+            val starting = next is PlaybackState.Playing && previous !is PlaybackState.Playing
             if (starting) {
                 // Android 15+ requires foreground eligibility before requesting audio focus.
                 startService(Intent(this, PlaybackService::class.java))
@@ -208,32 +215,35 @@ class PlaybackService : MediaSessionService() {
                 if (!hasFocus) {
                     hasFocus =
                         audioManager.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    focusRequested = hasFocus
                     check(hasFocus) { "Audio focus denied" }
                 }
             }
-            val next = clockSession.dispatch(command)
             if (next is PlaybackState.Playing) {
-                if (previous !is PlaybackState.Playing) {
-                    generation++
-                    val id = generation
+                if (starting) {
+                    releaseGeneration++
+                    focusPolicy.cancelResume()
+                    val id = rendererGeneration
+                    playbackActive = true
                     if (!wakeLock.isHeld) wakeLock.acquire()
-                    engine.setDeadline(
-                        next.remaining?.let { SystemClock.elapsedRealtime() + it.inWholeMilliseconds },
-                        clockSession.settings.fadeOut.inWholeMilliseconds
-                    )
                     engine.play(
                         next.mix,
-                        if (starting && previous is PlaybackState.Idle) clockSession.settings.fadeIn.inWholeMilliseconds else 50
+                        if (previous is PlaybackState.Idle) clockSession.settings.fadeIn.inWholeMilliseconds else 50,
+                        deadline = clockSession.deadline?.inWholeMilliseconds,
+                        fadeOutMs = clockSession.settings.fadeOut.inWholeMilliseconds,
                     ) {
-                        handler.post { if (id == generation) audioFailure() }
+                        handler.post { if (id == rendererGeneration) audioFailure() }
                     }
                 } else engine.update(next.mix)
                 handler.removeCallbacks(tick)
                 handler.postDelayed(tick, 250)
-            } else if (previous is PlaybackState.Playing || command == PlaybackCommand.Stop ||
-                (command == PlaybackCommand.Pause && abandonFocus)
-            ) {
-                silenceAndRelease(abandonFocus)
+            } else {
+                if (next is PlaybackState.Idle) focusPolicy.cancelResume()
+                if (playbackActive || command == PlaybackCommand.Stop ||
+                    (command == PlaybackCommand.Pause && abandonFocus)
+                ) {
+                    silenceAndRelease(abandonFocus || next is PlaybackState.Idle)
+                }
             }
             if (command is PlaybackCommand.UpdateMix || command is PlaybackCommand.Configure) saveSettings()
             publish()
@@ -243,16 +253,19 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun silenceAndRelease(abandonFocus: Boolean) {
+        playbackActive = false
         handler.removeCallbacks(tick)
         val drainMs = engine.fadeToSilence()
-        val id = ++generation
+        val id = ++releaseGeneration
         handler.postDelayed({
-            if (generation == id) {
+            if (releaseGeneration == id) {
                 engine.stop()
+                rendererGeneration++
                 if (wakeLock.isHeld) wakeLock.release()
                 if (abandonFocus) {
                     audioManager.abandonAudioFocusRequest(focusRequest)
                     hasFocus = false
+                    focusRequested = false
                 }
                 if (clockSession.state() is PlaybackState.Idle) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -265,6 +278,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun audioFailure() {
+        focusPolicy.cancelResume()
         clockSession.dispatch(PlaybackCommand.Stop)
         silenceAndRelease(true)
         failed = true
@@ -307,7 +321,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        generation++
+        releaseGeneration++
+        rendererGeneration++
         handler.removeCallbacksAndMessages(null)
         engine.stop()
         if (wakeLock.isHeld) wakeLock.release()
