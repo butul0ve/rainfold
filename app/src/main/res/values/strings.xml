@@ -77,4 +77,8 @@
     <string name="scene_library_error">Could not update scenes. Try again.</string>
     <string name="scene_actions">Scene actions</string>
     <string name="amoled_theme">AMOLED background</string>
+    <string name="choose_language">Choose your language</string>
+    <string name="language_description">You can change the language here at any time.</string>
+    <string name="language_confirm">Continue</string>
+    <string name="language_setting">Language: %1$s</string>
 </resources>

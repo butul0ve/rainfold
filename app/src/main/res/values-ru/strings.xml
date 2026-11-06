@@ -77,4 +77,8 @@
     <string name="scene_library_error">Не удалось изменить сцены. Попробуйте ещё раз.</string>
     <string name="scene_actions">Действия со сценой</string>
     <string name="amoled_theme">AMOLED-фон</string>
+    <string name="choose_language">Выберите язык</string>
+    <string name="language_description">Язык можно изменить здесь в любое время.</string>
+    <string name="language_confirm">Продолжить</string>
+    <string name="language_setting">Язык: %1$s</string>
 </resources>
