@@ -37,6 +37,7 @@ import com.rainfold.app.domain.SceneLibrary
 import com.rainfold.app.domain.ScenePurpose
 import com.rainfold.app.domain.SoundScene
 import com.rainfold.app.player.sceneTitle
+import com.rainfold.app.player.descriptionResource
 
 class SceneActions(
     val select: (String, Boolean) -> Unit,
@@ -95,11 +96,7 @@ private fun SceneCard(scene: SoundScene, state: PlaybackScreenState, actions: Sc
             Text(title, style = MaterialTheme.typography.titleLarge)
             Text(purposeLabel(scene.purpose), style = MaterialTheme.typography.labelLarge)
             if (state.library.selectedId == scene.id) Text(stringResource(R.string.noise_selected))
-            when (scene.id) {
-                "builtin:deep-sleep" -> Text(stringResource(R.string.scene_deep_sleep_description))
-                "builtin:rainy-window" -> Text(stringResource(R.string.scene_rainy_window_description))
-                "builtin:quiet-focus" -> Text(stringResource(R.string.scene_quiet_focus_description))
-            }
+            scene.descriptionResource()?.let { Text(stringResource(it)) }
             FilterChip(selected = favorite, onClick = { actions.favorite(scene.id) }, enabled = state.connected,
                 label = { Text(stringResource(R.string.favorites)) },
                 modifier = Modifier.semantics { contentDescription = favoriteLabel })

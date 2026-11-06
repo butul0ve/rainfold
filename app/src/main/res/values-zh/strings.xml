@@ -81,4 +81,8 @@
     <string name="language_description">你可以随时在这里更改语言。</string>
     <string name="language_confirm">继续</string>
     <string name="language_setting">语言：%1$s</string>
+    <string name="scene_cozy_storm">温馨风暴</string>
+    <string name="scene_airplane_cabin">飞机客舱</string>
+    <string name="scene_cozy_storm_description">雨声与低沉的棕噪声，不包含雷声录音。</string>
+    <string name="scene_airplane_cabin_description">平稳的白噪声，令人联想到客舱的嗡鸣声，不包含飞机录音。</string>
 </resources>

@@ -25,14 +25,14 @@ Use **Language** on the home screen to reopen the dialog and change the language
 
 ## Saved scenes
 
-- **Scenes** opens three localized recipes: **Deep Sleep** (brown noise), **Rainy Window** (rain with noise muted), and **Quiet Focus** (pink noise with quiet rain). Their Sleep/Focus labels describe intent; session modes and their timer defaults belong to stage 4.
+- **Scenes** opens five localized recipes: **Deep Sleep** (brown noise), **Rainy Window** (rain with noise muted), **Quiet Focus** (pink noise with quiet rain), **Cozy Storm** (brown noise with stronger rain), and **Airplane Cabin** (steady white noise). Their Sleep/Focus labels describe intent; session modes and their timer defaults belong to stage 4.
 - **Choose scene** applies its layers without starting stopped/paused playback. **Play** on a scene card explicitly applies and starts/resumes it. During playback, either action updates the existing mixer with its gain ramps, keeping the same audio output and timer deadline. Opening the library never previews audio.
 - **Save as new scene** captures the service's current layer types, volumes and mute states, plus a name and Sleep/Focus label. Timer and fades remain session settings. Names contain 1–60 characters; up to 100 custom recipes can be kept locally.
 - Each scene has a favorite toggle; the **Favorites** filter works for built-in and custom scenes. **Scene actions** offers copying, and custom scenes also support rename and deletion with confirmation. Built-in recipes cannot be overwritten or deleted. Copying keeps the current mix and selection; deleting a selected recipe retains the live mix and playback.
 - Manual layer edits do not overwrite a recipe: its title gains an **edited** marker. Save those edits as a new recipe or select the original again to restore its sound. Restart restores both the last selected scene and the latest mix edits in the stopped state. The current scene title also appears in system media controls.
 - Versioned JSON is stored alongside the current mix in private SharedPreferences, using stable IDs. Older installations retain their existing mix without an automatic preset selection. Invalid individual recipes are skipped while intact recipes remain available; dangling selection/favorite IDs are removed. No storage permission, network service or new dependency is needed. Scenes survive normal app updates; clearing app data or uninstalling removes them.
 
-Cozy Storm and Airplane Cabin are deferred until the audio catalog can expand after rain acceptance. No storm or cabin recording is implied by the existing recipes.
+All five recipes use the existing noise and rain sources. Cozy Storm has no thunder recording; Airplane Cabin suggests cabin hum through white noise, without an aircraft recording. Their descriptions appear both in the library and on the home screen in English, Russian, German and Simplified Chinese. The source catalog and device acceptance remain unchanged.
 
 ## Stack and architecture
 
@@ -77,7 +77,7 @@ The run's **Artifacts** section provides `rainfold-debug` (APK, only when verifi
 
 ### Verification status
 
-Localization verification (6 November 2026): **101 tests pass with no failures, errors or skips; debug APK builds; lint reports 0 errors / 13 warnings**. Fourteen new Robolectric cases on API 26/35 cover first-run/upgrade prompting, saved choices, Activity recreation, platform-locale migration, resource formatting and paused service metadata without changing the session. All 82 string keys and format placeholders match across English, Russian, German and Simplified Chinese. The additional lint warning notes that `localeConfig` is ignored below API 33, where AppCompat handles language selection. No device or emulator was used; visual, large-font and TalkBack acceptance remains open.
+Scene completion and localization verification (6 November 2026): **101 tests pass with no failures, errors or skips; debug APK builds; lint reports 0 errors / 13 warnings**. Fourteen Robolectric cases on API 26/35 cover first-run/upgrade prompting, saved choices, Activity recreation, platform-locale migration, resource formatting and paused service metadata without changing the session. All 86 string keys and format placeholders match across English, Russian, German and Simplified Chinese. The additional lint warning notes that `localeConfig` is ignored below API 33, where AppCompat handles language selection. No device or emulator was used; visual, large-font and TalkBack acceptance remains open.
 
 Saved-scenes verification (6 November 2026): **87 tests pass with no failures, errors or skips; debug APK builds; lint reports 0 errors / 12 warnings**. This includes all 74 develop regressions and 13 new tests for recipe validation, immutable edits, favorites/limits, JSON recovery, service recreation, authoritative mix capture, media titles, and selection/copy/deletion without a new output or deadline. Idle selection stays silent; paused selection requires an explicit Play to resume. No device or emulator was used; large-font/TalkBack/landscape checks and real process/update acceptance remain open.
 

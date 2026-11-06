@@ -134,17 +134,19 @@ class LanguageSettingsTest {
     @Test
     fun `all languages translate scenes dialogs and formatted labels but preserve user names`() {
         val expected = mapOf(
-            AppLanguage.ENGLISH to listOf("Play", "Scenes", "Choose your language", "Deep Sleep"),
-            AppLanguage.RUSSIAN to listOf("Играть", "Сцены", "Выберите язык", "Глубокий сон"),
-            AppLanguage.GERMAN to listOf("Abspielen", "Szenen", "Sprache auswählen", "Tiefer Schlaf"),
-            AppLanguage.CHINESE to listOf("播放", "场景", "选择语言", "深度睡眠"),
+            AppLanguage.ENGLISH to listOf("Play", "Scenes", "Choose your language", "Deep Sleep", "Cozy Storm", "Airplane Cabin"),
+            AppLanguage.RUSSIAN to listOf("Играть", "Сцены", "Выберите язык", "Глубокий сон", "Уютная буря", "В салоне самолёта"),
+            AppLanguage.GERMAN to listOf("Abspielen", "Szenen", "Sprache auswählen", "Tiefer Schlaf", "Gemütlicher Sturm", "Flugzeugkabine"),
+            AppLanguage.CHINESE to listOf("播放", "场景", "选择语言", "深度睡眠", "温馨风暴", "飞机客舱"),
         )
         expected.forEach { (language, strings) ->
             val localized = context.createConfigurationContext(Configuration(context.resources.configuration).apply {
                 setLocales(LocaleList(Locale.forLanguageTag(language.tag)))
             })
             assertEquals(strings, listOf(localized.getString(R.string.play), localized.getString(R.string.scenes),
-                localized.getString(R.string.choose_language), localized.sceneTitle(SceneLibrary.builtIns.first())))
+                localized.getString(R.string.choose_language), localized.sceneTitle(SceneLibrary.builtIns.first()),
+                localized.sceneTitle(SceneLibrary.builtIns.single { it.id == "builtin:cozy-storm" }),
+                localized.sceneTitle(SceneLibrary.builtIns.single { it.id == "builtin:airplane-cabin" })))
             assertTrue(localized.getString(R.string.remaining_time, 2, 5).endsWith("2:05"))
             assertEquals("42%", localized.getString(R.string.volume_percent, 42))
             assertEquals("Моя ночь 夜", localized.sceneTitle(SceneLibrary.builtIns.first().copy(id = "user:one", name = "Моя ночь 夜")))

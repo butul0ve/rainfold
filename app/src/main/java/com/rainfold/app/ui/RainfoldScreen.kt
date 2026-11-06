@@ -41,6 +41,7 @@ import com.rainfold.app.R
 import com.rainfold.app.domain.SceneLibrary
 import com.rainfold.app.domain.ScenePurpose
 import com.rainfold.app.player.sceneTitle
+import com.rainfold.app.player.descriptionResource
 import androidx.compose.ui.platform.LocalContext
 import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackState
@@ -102,6 +103,9 @@ fun RainfoldScreen(
                     Text(if (selectedScene != null && selectedScene.mix != state.mix) stringResource(R.string.scene_modified, sceneTitle) else sceneTitle,
                         style = MaterialTheme.typography.headlineMedium)
                     selectedScene?.let { Text(purposeLabel(it.purpose), style = MaterialTheme.typography.labelLarge) }
+                    selectedScene?.descriptionResource()?.let {
+                        Text(stringResource(it), style = MaterialTheme.typography.bodyMedium)
+                    }
                     OutlinedButton(onClick = { scenes = true }, enabled = state.connected, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.scenes))
                     }

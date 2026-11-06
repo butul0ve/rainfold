@@ -81,4 +81,8 @@
     <string name="language_description">Du kannst die Sprache hier jederzeit ändern.</string>
     <string name="language_confirm">Weiter</string>
     <string name="language_setting">Sprache: %1$s</string>
+    <string name="scene_cozy_storm">Gemütlicher Sturm</string>
+    <string name="scene_airplane_cabin">Flugzeugkabine</string>
+    <string name="scene_cozy_storm_description">Regen und tiefes braunes Rauschen. Keine Donneraufnahme.</string>
+    <string name="scene_airplane_cabin_description">Gleichmäßiges weißes Rauschen erinnert an das Summen einer Kabine. Keine Flugzeugaufnahme.</string>
 </resources>

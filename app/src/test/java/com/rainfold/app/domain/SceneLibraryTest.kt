@@ -14,7 +14,7 @@ class SceneLibraryTest {
         assertEquals(SoundScene("user:one", "Вечер", mix, ScenePurpose.SLEEP), library.selected)
         assertEquals(mix, library.selected!!.mix)
         assertFalse(library.selected!!.builtIn)
-        assertEquals(3, SceneLibrary().scenes.size)
+        assertEquals(5, SceneLibrary().scenes.size)
     }
 
     @Test
