@@ -7,8 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 @Composable
-fun RainfoldTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
-    val colors = if (darkTheme) {
+fun RainfoldTheme(darkTheme: Boolean, amoled: Boolean = false, content: @Composable () -> Unit) {
+    val colors = if (darkTheme || amoled) {
         darkColorScheme(
             primary = Color(0xFFD3BCFF),
             onPrimary = Color(0xFF34106B),
@@ -47,5 +47,12 @@ fun RainfoldTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
             surfaceContainerHighest = Color(0xFFF0E6F0),
         )
     }
-    MaterialTheme(colorScheme = colors, content = content)
+    MaterialTheme(colorScheme = if (amoled) colors.copy(
+        background = Color.Black,
+        surface = Color.Black,
+        surfaceContainerLow = Color(0xFF080808),
+        surfaceContainer = Color(0xFF101010),
+        surfaceContainerHigh = Color(0xFF181818),
+        surfaceContainerHighest = Color(0xFF202020),
+    ) else colors, content = content)
 }
