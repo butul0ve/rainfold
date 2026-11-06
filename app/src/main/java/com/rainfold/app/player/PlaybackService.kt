@@ -17,11 +17,13 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
+import androidx.core.content.edit
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
@@ -40,6 +42,13 @@ import com.rainfold.app.domain.PlaybackState
 import com.rainfold.app.domain.SceneLibrary
 import com.rainfold.app.domain.ScenePurpose
 import com.rainfold.app.domain.SessionSettings
+import com.rainfold.app.domain.SessionMode
+import com.rainfold.app.domain.SessionPreferences
+import com.rainfold.app.domain.FocusProgress
+import com.rainfold.app.domain.LocalSessionTime
+import com.rainfold.app.dsp.CompletionCue
+import java.time.LocalDate
+import java.time.ZonedDateTime
 import java.util.UUID
 import com.rainfold.app.dsp.PcmWave
 import com.rainfold.app.localization.LanguageSettings
@@ -60,7 +69,10 @@ class PlaybackService : MediaSessionService() {
     private var focusRequested = false
     // A domain snapshot can expire before the renderer has been told to stop.
     private var playbackActive = false
+    private var cuePlaying = false
     private var failed = false
+    private var focusProgress = FocusProgress()
+    private val bootCount by lazy { Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1) }
     private var encodedLibrary = SceneLibraryJson.encode(SceneLibrary())
     private var library = SceneLibrary()
         set(value) {
@@ -80,10 +92,11 @@ class PlaybackService : MediaSessionService() {
     }
     private val tick = object : Runnable {
         override fun run() {
-            if (clockSession.state() is PlaybackState.Idle) dispatch(PlaybackCommand.Stop)
-            else {
+            if (clockSession.state() is PlaybackState.Idle && (playbackActive || clockSession.hasCompletion)) {
+                dispatch(PlaybackCommand.Stop, naturalEnd = true)
+            } else {
                 publish()
-                handler.postDelayed(this, 250)
+                observeSession()
             }
         }
     }
@@ -91,13 +104,10 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         clockSession.dispatch(PlaybackCommand.UpdateMix(MixPreferences.decode(preferences.all)))
-        clockSession.configure(
-            SessionSettings(
-                preferences.getLong("duration", 0).takeIf { it > 0 }?.milliseconds,
-                preferences.getLong("fadeIn", 1000).coerceIn(0, 60_000).milliseconds,
-                preferences.getLong("fadeOut", 10_000).coerceIn(0, 60_000).milliseconds,
-            )
-        )
+        clockSession.configure(SessionPreferences.decode(preferences.all))
+        focusProgress = FocusProgress(preferences.getString("focusDay", "").orEmpty(),
+            preferences.getInt("focusCount", 0).coerceAtLeast(0),
+            preferences.getLong("breakDeadline", -1).takeIf { it >= 0 }, preferences.getInt("breakBoot", -1))
         library = SceneLibraryJson.decode(preferences.getString(SceneLibraryJson.KEY, null))
         audioManager = getSystemService(AudioManager::class.java)
         wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
@@ -175,15 +185,9 @@ class PlaybackService : MediaSessionService() {
                         if (MixPreferences.encode(clockSession.mix).keys.any(args::containsKey)) {
                             dispatch(PlaybackCommand.UpdateMix(args.readMix(clockSession.mix)))
                         }
-                        if (args.containsKey("duration")) dispatch(
-                            PlaybackCommand.Configure(
-                                SessionSettings(
-                                    args.getLong("duration").takeIf { it > 0 }?.milliseconds,
-                                    args.getLong("fadeIn").coerceIn(0, 60_000).milliseconds,
-                                    args.getLong("fadeOut").coerceIn(0, 60_000).milliseconds
-                                )
-                            )
-                        )
+                        if (SessionPreferences.encode(clockSession.settings).keys.any(args::containsKey)) {
+                            handleSettingsCommand(args)
+                        }
                         Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                     } catch (_: IllegalArgumentException) {
                         Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
@@ -192,16 +196,36 @@ class PlaybackService : MediaSessionService() {
             }).build()
         languageSettings.observe(languageListener)
         publish()
+        observeSession()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
         mediaSession
 
-    private fun dispatch(command: PlaybackCommand, abandonFocus: Boolean = true) {
+    internal fun handleSettingsCommand(args: Bundle) {
+        dispatch(PlaybackCommand.Configure(args.readSettings(clockSession.settings)))
+    }
+
+    private fun dispatch(command: PlaybackCommand, abandonFocus: Boolean = true, naturalEnd: Boolean = false) {
         if (abandonFocus) focusPolicy.onUserCommand(command)
         failed = false
         try {
             val (previous, next) = clockSession.transition(command)
+            val completion = clockSession.takeCompletion()
+            val completed = completion?.settings
+            val focusCompleted = completed?.mode == SessionMode.FOCUS && completed.duration != null
+            if (focusCompleted) {
+                val now = SystemClock.elapsedRealtime().milliseconds
+                val deadline = checkNotNull(completion).deadline
+                focusProgress = focusProgress.complete(LocalSessionTime.completedDay(deadline, now, ZonedDateTime.now()),
+                    deadline.inWholeMilliseconds, checkNotNull(completed).breakDuration, bootCount)
+                saveProgress()
+            }
+            if ((command == PlaybackCommand.Stop && !naturalEnd) ||
+                (command is PlaybackCommand.Configure && clockSession.settings.mode != SessionMode.FOCUS)) {
+                focusProgress = focusProgress.clearBreak()
+                saveProgress()
+            }
             val starting = next is PlaybackState.Playing && previous !is PlaybackState.Playing
             if (starting) {
                 // Android 15+ requires foreground eligibility before requesting audio focus.
@@ -229,6 +253,9 @@ class PlaybackService : MediaSessionService() {
             }
             if (next is PlaybackState.Playing) {
                 if (starting) {
+                    cuePlaying = false
+                    focusProgress = focusProgress.clearBreak()
+                    saveProgress()
                     releaseGeneration++
                     focusPolicy.cancelResume()
                     playbackActive = true
@@ -239,54 +266,83 @@ class PlaybackService : MediaSessionService() {
                         deadline = clockSession.deadline?.inWholeMilliseconds,
                         fadeOutMs = clockSession.settings.fadeOut.inWholeMilliseconds,
                         fadeFromSilence = previous is PlaybackState.Idle,
+                        sequentialFade = clockSession.settings.mode == SessionMode.SLEEP,
                     ) { id ->
                         handler.post { if (engine.isCurrentRenderer(id)) audioFailure() }
                     }
                 } else engine.update(next.mix)
-                handler.removeCallbacks(tick)
-                handler.postDelayed(tick, 250)
             } else {
                 if (next is PlaybackState.Idle) focusPolicy.cancelResume()
-                if (playbackActive || command == PlaybackCommand.Stop ||
+                if (playbackActive || cuePlaying || command == PlaybackCommand.Stop ||
                     (command == PlaybackCommand.Pause && abandonFocus)
                 ) {
-                    silenceAndRelease(abandonFocus || next is PlaybackState.Idle)
+                    val cue = focusCompleted && completed.completionCue && hasFocus && playbackActive &&
+                        command != PlaybackCommand.Pause && (command != PlaybackCommand.Stop || naturalEnd) &&
+                        SystemClock.elapsedRealtime() - checkNotNull(completion).deadline.inWholeMilliseconds <= 1000
+                    if (cue) engine.playCompletionCue()
+                    silenceAndRelease(abandonFocus || next is PlaybackState.Idle, if (cue) CompletionCue.DURATION_MS else 0)
                 }
             }
             if (command is PlaybackCommand.UpdateMix || command is PlaybackCommand.Configure) saveSettings()
             publish()
+            observeSession()
         } catch (_: RuntimeException) {
             audioFailure()
         }
     }
 
-    private fun silenceAndRelease(abandonFocus: Boolean) {
-        playbackActive = false
+    private fun observeSession() {
         handler.removeCallbacks(tick)
-        val drainMs = engine.fadeToSilence()
+        val playback = clockSession.state()
+        val active = playback is PlaybackState.Playing || clockSession.hasCompletion ||
+            (playback is PlaybackState.Paused && clockSession.settings.endAtMinute != null) ||
+            (focusProgress.breakRemaining(SystemClock.elapsedRealtime(), bootCount)?.isPositive() == true)
+        handler.postDelayed(tick, if (active) 250 else 60_000)
+    }
+
+    private fun saveProgress() {
+        preferences.edit {
+            putString("focusDay", focusProgress.day)
+            putInt("focusCount", focusProgress.count)
+            putLong("breakDeadline", focusProgress.breakDeadlineMs ?: -1)
+            putInt("breakBoot", focusProgress.bootCount)
+        }
+    }
+
+    private fun silenceAndRelease(abandonFocus: Boolean, cueDelayMs: Long = 0) {
+        playbackActive = false
+        cuePlaying = cueDelayMs > 0
+        handler.removeCallbacks(tick)
         val id = ++releaseGeneration
-        handler.postDelayed({
-            if (releaseGeneration == id) {
-                engine.stop()
-                if (wakeLock.isHeld) wakeLock.release()
-                if (abandonFocus) {
-                    audioManager.abandonAudioFocusRequest(focusRequest)
-                    hasFocus = false
-                    focusRequested = false
+        fun drain() {
+            if (releaseGeneration != id) return
+            val drainMs = engine.fadeToSilence()
+            handler.postDelayed({
+                if (releaseGeneration == id) {
+                    engine.stop()
+                    cuePlaying = false
+                    if (wakeLock.isHeld) wakeLock.release()
+                    if (abandonFocus) {
+                        audioManager.abandonAudioFocusRequest(focusRequest)
+                        hasFocus = false
+                        focusRequested = false
+                    }
+                    if (clockSession.state() is PlaybackState.Idle) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    } else {
+                        stopForeground(STOP_FOREGROUND_DETACH)
+                    }
                 }
-                if (clockSession.state() is PlaybackState.Idle) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                } else {
-                    stopForeground(STOP_FOREGROUND_DETACH)
-                }
-            }
-        }, drainMs)
+            }, drainMs)
+        }
+        if (cueDelayMs > 0) handler.postDelayed({ drain() }, cueDelayMs) else drain()
     }
 
     private fun audioFailure() {
         focusPolicy.cancelResume()
         clockSession.dispatch(PlaybackCommand.Stop)
+        clockSession.takeCompletion()
         silenceAndRelease(true)
         failed = true
         publish()
@@ -333,17 +389,24 @@ class PlaybackService : MediaSessionService() {
                 is Boolean -> edit.putBoolean(key, value)
             }
         }
-        edit
-            .putString(SceneLibraryJson.KEY, encodedLibrary)
-            .putLong("duration", clockSession.settings.duration?.inWholeMilliseconds ?: 0)
-            .putLong("fadeIn", clockSession.settings.fadeIn.inWholeMilliseconds)
-            .putLong("fadeOut", clockSession.settings.fadeOut.inWholeMilliseconds).apply()
+        SessionPreferences.encode(clockSession.settings).forEach { (key, value) ->
+            when (value) {
+                is String -> edit.putString(key, value)
+                is Long -> edit.putLong(key, value)
+                is Int -> edit.putInt(key, value)
+                is Boolean -> edit.putBoolean(key, value)
+            }
+        }
+        edit.putString(SceneLibraryJson.KEY, encodedLibrary).apply()
     }
 
     private fun publish() {
         adapter.refresh()
         val state = clockSession.state()
         mediaSession?.setSessionExtras(Bundle().apply {
+            putSettings(clockSession.settings)
+            putInt("focusToday", focusProgress.countToday(LocalDate.now().toString()))
+            putLong("breakRemaining", focusProgress.breakRemaining(SystemClock.elapsedRealtime(), bootCount)?.inWholeMilliseconds ?: -1)
             putMix(clockSession.mix)
             putString(SceneLibraryJson.KEY, encodedLibrary)
             putString(

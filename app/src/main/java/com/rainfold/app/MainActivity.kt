@@ -65,7 +65,9 @@ class MainActivity : AppCompatActivity() {
                     currentLanguage = language
                     languageRequired = false
                     AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(language.tag))
-                }
+                },
+                viewModel::selectMode,
+                viewModel::configureReminder,
             )
         }
     }
