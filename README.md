@@ -44,13 +44,23 @@ The runtime overlap gives a 29.5-second repeated period. The recording is loaded
 
 ## Build and verification
 
-Open in Android Studio with JDK 17 or later. Run:
+Open in Android Studio with JDK 21 (used by CI), Android SDK Platform 36 and Build Tools 36.0.0. Run:
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
-Local regression verification (6 November 2026): all 74 tests pass (0 failures, errors or skips), the debug APK builds, and lint reports 0 errors / 17 warnings. New coverage uses Robolectric on API 35 for actual Bundle transport and service Stop/destruction, plus deterministic fake-output tests for stale renderer callbacks, posted service errors and rapid Stop/Play versus Pause/Resume. The Bundle, stale callback and skipped fade-in regressions were reproduced before their fixes. No emulator or device was used. Robolectric is a test-only dependency; the APK dependencies are unchanged.
+### Continuous integration
+
+[Android CI](.github/workflows/android-ci.yml) runs on every pull request, pushes to `develop`/`main`, and manual dispatch from the Actions tab once the workflow is on the default branch. It uses Ubuntu 24.04, Temurin JDK 21 and the repository's Gradle Wrapper to run unit tests (including Robolectric), build the debug APK and run Android Lint. It does not start an emulator or use a connected device.
+
+Gradle dependencies are cached; only branch push runs can update the cache. New runs cancel older runs for the same PR or branch, and each job has a 30-minute timeout. Actions are pinned to commit SHAs and the workflow token only has read access to repository contents. No repository secrets or release signing keys are required.
+
+The run's **Artifacts** section provides `rainfold-debug` (APK, only when verification succeeds) and `verification-reports` (JUnit XML, HTML test reports and lint reports, also uploaded after a failed check when available). Both expire after 3 days to limit storage use. A failed test, lint error or build failure fails the job; existing lint warnings remain visible in the report. This CI does not replace the listening and device acceptance below.
+
+### Verification status
+
+Local regression verification (6 November 2026): all 74 tests pass (0 failures, errors or skips), the debug APK builds, and lint reports 0 errors / 18 warnings. New coverage uses Robolectric on API 35 for actual Bundle transport and service Stop/destruction, plus deterministic fake-output tests for stale renderer callbacks, posted service errors and rapid Stop/Play versus Pause/Resume. The Bundle, stale callback and skipped fade-in regressions were reproduced before their fixes. No emulator or device was used. Robolectric is a test-only dependency; the APK dependencies are unchanged.
 
 Earlier cloud verification: debug APK built; lint has 0 errors and 10 warnings (dependencies unchanged). 63 deterministic unit tests pass with no failures, errors or skips: the original 41 regressions plus mixing/headroom, independent mute/gain, rapid layer edits, loop period/overlap, shipped-asset checksum/PCM decoding, persistence migration and rain changes during focus interruption. Tests also verify one output and the unchanged deadline while rain is added, muted, adjusted and removed. Regression tests cover focus interruption sequences, commands at timer expiry, partial PCM writes, rapid renderer resume and output cleanup on failure. Renderer tests use a fake audio output; Android focus callbacks, actual AudioTrack behavior, wake locks and foreground transitions still require device acceptance. The cloud run used `source /workspace/.rainfold-env/env.sh`, `--offline`, `-Pkotlin.compiler.execution.strategy=in-process` and `-Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"`. The first combined run exhausted the default daemon Metaspace during lint; rerunning with these process-local memory limits succeeded. The repository has no configured formatter task; follow `.editorconfig`, including no final newline in text files.
 
