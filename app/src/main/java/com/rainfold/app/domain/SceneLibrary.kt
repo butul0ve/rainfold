@@ -59,6 +59,10 @@ data class SceneLibrary(
                 NoiseMix(rainEnabled = true, rainVolume = 0.65f, noiseMuted = true), ScenePurpose.SLEEP),
             SoundScene("builtin:quiet-focus", "Quiet Focus",
                 NoiseMix(NoiseType.PINK, 0.4f, true, 0.2f), ScenePurpose.FOCUS),
+            SoundScene("builtin:cozy-storm", "Cozy Storm",
+                NoiseMix(NoiseType.BROWN, 0.5f, true, 0.6f), ScenePurpose.SLEEP),
+            SoundScene("builtin:airplane-cabin", "Airplane Cabin",
+                NoiseMix(NoiseType.WHITE, 0.35f), ScenePurpose.FOCUS),
         )
 
         private fun checkedName(name: String): String = name.trim().also {

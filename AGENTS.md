@@ -24,6 +24,7 @@
 
 ## Git
 
+- Before starting implementation, fetch the current remote `develop` and `main`, compare them with the working base, and check related pull requests. Use the latest appropriate base and preserve already merged fixes and features. Recheck the target branch before publishing a PR.
 - Make atomic commits: one coherent, independently reviewable intent per commit.
 - Never amend, reset, force-push or discard existing work unless the user explicitly requests it.
 - Inspect `git status` before staging; stage only files belonging to the current change.

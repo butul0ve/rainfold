@@ -81,4 +81,8 @@
     <string name="language_description">You can change the language here at any time.</string>
     <string name="language_confirm">Continue</string>
     <string name="language_setting">Language: %1$s</string>
+    <string name="scene_cozy_storm">Cozy Storm</string>
+    <string name="scene_airplane_cabin">Airplane Cabin</string>
+    <string name="scene_cozy_storm_description">Rain and deep brown noise. No thunder recording.</string>
+    <string name="scene_airplane_cabin_description">Steady white noise suggesting a cabin hum. No aircraft recording.</string>
 </resources>

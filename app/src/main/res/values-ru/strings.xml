@@ -81,4 +81,8 @@
     <string name="language_description">Язык можно изменить здесь в любое время.</string>
     <string name="language_confirm">Продолжить</string>
     <string name="language_setting">Язык: %1$s</string>
+    <string name="scene_cozy_storm">Уютная буря</string>
+    <string name="scene_airplane_cabin">В салоне самолёта</string>
+    <string name="scene_cozy_storm_description">Дождь и глубокий коричневый шум. Без записи грома.</string>
+    <string name="scene_airplane_cabin_description">Ровный белый шум, напоминающий гул салона. Без записи самолёта.</string>
 </resources>

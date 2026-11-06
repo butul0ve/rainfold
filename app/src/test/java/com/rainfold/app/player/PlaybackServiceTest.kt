@@ -9,6 +9,7 @@ import androidx.media3.session.MediaSession
 import com.rainfold.app.domain.NoiseMix
 import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackCommand
+import com.rainfold.app.domain.SceneLibrary
 import com.rainfold.app.domain.ScenePurpose
 import com.rainfold.app.domain.SessionSettings
 import com.rainfold.app.domain.PlaybackSession
@@ -127,6 +128,11 @@ class PlaybackServiceTest {
             session.player.play()
             assertTrue(output.writes.poll(5, TimeUnit.SECONDS) != null)
             val deadline = clock.deadline
+            for (id in listOf("builtin:cozy-storm", "builtin:airplane-cabin")) {
+                service.scene("select", id)
+                assertEquals(SceneLibrary.builtIns.single { it.id == id }.mix, clock.mix)
+                assertEquals(deadline, clock.deadline)
+            }
             service.scene("select", "builtin:quiet-focus")
             assertEquals(deadline, clock.deadline)
             service.scene("save", name = "Work", purpose = ScenePurpose.FOCUS)
