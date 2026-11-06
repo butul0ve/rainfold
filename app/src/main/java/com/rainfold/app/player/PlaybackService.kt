@@ -8,6 +8,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Bundle
@@ -40,6 +42,7 @@ import com.rainfold.app.domain.ScenePurpose
 import com.rainfold.app.domain.SessionSettings
 import java.util.UUID
 import com.rainfold.app.dsp.PcmWave
+import com.rainfold.app.localization.LanguageSettings
 import kotlin.time.Duration.Companion.milliseconds
 
 @UnstableApi
@@ -66,6 +69,10 @@ class PlaybackService : MediaSessionService() {
         }
     private var releaseGeneration = 0
     private val preferences by lazy { getSharedPreferences("playback", MODE_PRIVATE) }
+    private val languageSettings by lazy { LanguageSettings(this) }
+    private val languageListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        handler.post { adapter.refresh() }
+    }
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) dispatch(PlaybackCommand.Pause)
@@ -183,6 +190,7 @@ class PlaybackService : MediaSessionService() {
                     }
                 }
             }).build()
+        languageSettings.observe(languageListener)
         publish()
     }
 
@@ -202,15 +210,15 @@ class PlaybackService : MediaSessionService() {
                 manager.createNotificationChannel(
                     NotificationChannel(
                         "playback",
-                        getString(R.string.app_name),
+                        languageSettings.localizedContext().getString(R.string.app_name),
                         NotificationManager.IMPORTANCE_LOW
                     )
                 )
                 startForeground(
                     1001, Notification.Builder(this, "playback")
                         .setSmallIcon(android.R.drawable.ic_media_play)
-                        .setContentTitle(getString(R.string.app_name))
-                        .setContentText(getString(R.string.play)).build()
+                        .setContentTitle(languageSettings.localizedContext().getString(R.string.app_name))
+                        .setContentText(languageSettings.localizedContext().getString(R.string.play)).build()
                 )
                 if (!hasFocus) {
                     hasFocus =
@@ -359,7 +367,13 @@ class PlaybackService : MediaSessionService() {
         dispatch(PlaybackCommand.Stop)
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        adapter.refresh()
+    }
+
     override fun onDestroy() {
+        languageSettings.stopObserving(languageListener)
         releaseGeneration++
         handler.removeCallbacksAndMessages(null)
         engine.stop()
@@ -375,8 +389,9 @@ class PlaybackService : MediaSessionService() {
     private inner class SessionPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
         fun refresh() = invalidateState()
         override fun getState(): State {
+            val localized = languageSettings.localizedContext()
             val playback = clockSession.state()
-            val noiseTitle = getString(
+            val noiseTitle = localized.getString(
                 when (clockSession.mix.noiseType) {
                     NoiseType.WHITE -> R.string.white_noise
                     NoiseType.PINK -> R.string.pink_noise
@@ -384,11 +399,11 @@ class PlaybackService : MediaSessionService() {
                 }
             )
             val mixTitle = if (clockSession.mix.rainEnabled) {
-                getString(R.string.noise_and_rain, noiseTitle)
+                localized.getString(R.string.noise_and_rain, noiseTitle)
             } else noiseTitle
             val title = library.selected?.let { scene ->
-                val name = sceneTitle(scene)
-                if (scene.mix == clockSession.mix) name else getString(R.string.scene_modified, name)
+                val name = localized.sceneTitle(scene)
+                if (scene.mix == clockSession.mix) name else localized.getString(R.string.scene_modified, name)
             } ?: mixTitle
             return State.Builder().setAvailableCommands(
                 Player.Commands.Builder().addAll(
@@ -408,7 +423,7 @@ class PlaybackService : MediaSessionService() {
                             MediaItem.Builder()
                                 .setMediaId("noise").setMediaMetadata(
                                     MediaMetadata.Builder().setTitle(title)
-                                        .setArtist(getString(R.string.app_name)).build()
+                                        .setArtist(localized.getString(R.string.app_name)).build()
                                 ).build()
                         ).build()
                     )

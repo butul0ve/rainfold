@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackState
 import com.rainfold.app.domain.SessionSettings
+import com.rainfold.app.localization.AppLanguage
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -65,12 +66,16 @@ fun RainfoldScreen(
     onRemoveRain: () -> Unit,
     sceneActions: SceneActions,
     onAmoledToggle: () -> Unit,
+    currentLanguage: AppLanguage,
+    languageSelectionRequired: Boolean,
+    onLanguageSelected: (AppLanguage) -> Unit,
 ) {
     var menu by rememberSaveable { mutableStateOf(false) }
     var addSound by rememberSaveable { mutableStateOf(false) }
     var scenes by rememberSaveable { mutableStateOf(false) }
     var saveScene by rememberSaveable { mutableStateOf(false) }
     var timer by rememberSaveable { mutableStateOf(false) }
+    var languageDialog by rememberSaveable { mutableStateOf(false) }
     val selectedScene = state.library.selected
     val idle = state.playback is PlaybackState.Idle
     val remaining = when (val playback = state.playback) {
@@ -144,10 +149,18 @@ fun RainfoldScreen(
                         modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.save_scene)) }
                     FilterChip(selected = state.amoled, onClick = onAmoledToggle,
                         label = { Text(stringResource(R.string.amoled_theme)) })
+                    OutlinedButton(onClick = { languageDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.language_setting, currentLanguage.nativeName))
+                    }
                     if (state.sceneError) Text(stringResource(R.string.scene_library_error), color = MaterialTheme.colorScheme.error)
                     if (state.audioFailed) Text(stringResource(R.string.audio_error), color = MaterialTheme.colorScheme.error)
                 }
                 PlaybackButton(state, onPlaybackToggle, Modifier.padding(RainfoldTokens.size16))
+            }
+            if (languageSelectionRequired || languageDialog) {
+                LanguageDialog(currentLanguage, languageSelectionRequired,
+                    onDismiss = { languageDialog = false },
+                    onSelect = { language -> languageDialog = false; onLanguageSelected(language) })
             }
             if (scenes) SceneBrowser(state, sceneActions, { scenes = false }, onPlaybackToggle)
             if (saveScene) SceneNameDialog(stringResource(R.string.save_scene),

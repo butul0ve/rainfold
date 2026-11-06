@@ -15,7 +15,13 @@ Rainfold is an offline Android soundscape player for white, pink and brown noise
 - Layer cards provide separate noise/rain volume and mute. Add rain through **Add sound → Environment → Add rain**, and remove it from its card. The noise remains the base layer; mute it to hear rain alone. Removing rain retains its volume/mute settings for the next addition.
 - The Play/Pause/Resume button stays below the scrollable controls and is also available in the bottom sheet. Opening the sheet does not preview audio. Adding a layer while stopped/paused only updates settings; explicit Play/Resume starts listening. During playback, an explicit layer edit changes the live mix.
 - The app saves mix composition, both volumes, mute states and timer/fade preferences locally. Existing noise-only preferences migrate with rain absent. Process restart restores preferences in the stopped state and never starts audio automatically.
-- The interface provides English/Russian resources, scrollable controls and system light/dark themes. The optional **AMOLED background** uses a black surface and is remembered locally. A static scene-colored gradient becomes subtler during Sleep scenes; no background motion is used.
+- The interface provides English, Russian, German and Simplified Chinese resources, scrollable controls and system light/dark themes. The optional **AMOLED background** uses a black surface and is remembered locally. A static scene-colored gradient becomes subtler during Sleep scenes; no background motion is used.
+
+## Language
+
+On first launch, including an existing installation that has never completed language selection, a dialog lists 🇬🇧 English, 🇷🇺 Русский, 🇩🇪 Deutsch and 🇨🇳 简体中文. Select a language and confirm to continue. The choice is saved locally and restored after restart; rotating the screen or leaving the app before confirmation does not complete selection.
+
+Use **Language** on the home screen to reopen the dialog and change the language. Android 13+ also exposes these four choices in the system app-language settings. AppCompat applies the selection on Android 8–12; a saved choice transfers to the platform when the device upgrades to Android 13+. Interface text, built-in scene titles and media metadata follow the choice. User-created scene names retain their original text. App Bundle language splitting is disabled so all four languages remain available offline.
 
 ## Saved scenes
 
@@ -70,6 +76,8 @@ Gradle dependencies are cached; only branch push runs can update the cache. New 
 The run's **Artifacts** section provides `rainfold-debug` (APK, only when verification succeeds) and `verification-reports` (JUnit XML, HTML test reports and lint reports, also uploaded after a failed check when available). Both expire after 3 days to limit storage use. A failed test, lint error or build failure fails the job; existing lint warnings remain visible in the report. This CI does not replace the listening and device acceptance below.
 
 ### Verification status
+
+Localization verification (6 November 2026): **101 tests pass with no failures, errors or skips; debug APK builds; lint reports 0 errors / 13 warnings**. Fourteen new Robolectric cases on API 26/35 cover first-run/upgrade prompting, saved choices, Activity recreation, platform-locale migration, resource formatting and paused service metadata without changing the session. All 82 string keys and format placeholders match across English, Russian, German and Simplified Chinese. The additional lint warning notes that `localeConfig` is ignored below API 33, where AppCompat handles language selection. No device or emulator was used; visual, large-font and TalkBack acceptance remains open.
 
 Saved-scenes verification (6 November 2026): **87 tests pass with no failures, errors or skips; debug APK builds; lint reports 0 errors / 12 warnings**. This includes all 74 develop regressions and 13 new tests for recipe validation, immutable edits, favorites/limits, JSON recovery, service recreation, authoritative mix capture, media titles, and selection/copy/deletion without a new output or deadline. Idle selection stays silent; paused selection requires an explicit Play to resume. No device or emulator was used; large-font/TalkBack/landscape checks and real process/update acceptance remain open.
 
