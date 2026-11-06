@@ -43,31 +43,37 @@ class NoisePlayer internal constructor(
         val deadlineMs: Long? = null,
         val fadeOutMs: Long = 30,
         val playId: Long = 0,
+        val fadeFromSilence: Boolean = true,
     )
 
     private val target = AtomicReference(Target(NoiseMix(), 0f, 30))
     private val running = AtomicBoolean(false)
-    private val errorCallback = AtomicReference<(() -> Unit)?>(null)
+    private var errorCallback: ((Long) -> Unit)? = null
+    @Volatile
+    private var rendererId = 0L
     private var renderThread: Thread? = null
     @Volatile
     private var audioTrack: AudioOutput? = null
 
+    @Synchronized
     fun play(
         mix: NoiseMix,
         fadeMs: Long,
         deadline: Long? = null,
         fadeOutMs: Long = 0,
-        onError: () -> Unit,
+        fadeFromSilence: Boolean = true,
+        onError: (Long) -> Unit,
     ) {
-        errorCallback.set(onError)
+        errorCallback = onError
         // Publish the deadline and playback target together, including when reusing a live output.
         target.set(
             Target(
                 mix, 1f, fadeMs.coerceAtLeast(30), deadline,
-                fadeOutMs.coerceAtLeast(30), target.get().playId + 1,
+                fadeOutMs.coerceAtLeast(30), target.get().playId + 1, fadeFromSilence,
             )
         )
         if (running.getAndSet(true)) return
+        val id = ++rendererId
         renderThread = thread(name = "RainfoldAudio", isDaemon = true) {
             var track: AudioOutput? = null
             var failure: RuntimeException? = null
@@ -87,10 +93,10 @@ class NoisePlayer internal constructor(
                     val next = target.get()
                     val now = elapsedRealtime()
                     if (next !== previous) {
-                        val restartAfterExpiry = previous != null && next.playId != previous.playId &&
-                            previous.deadlineMs?.let { it <= now } == true
-                        if (restartAfterExpiry) envelope.moveTo(0f, 0)
-                        if (previous == null || next.gain != previous.gain || restartAfterExpiry) {
+                        val newPlay = previous != null && next.playId != previous.playId
+                        // A Stop/Play transition can be published between two render blocks.
+                        if (newPlay && next.fadeFromSilence) envelope.moveTo(0f, 0)
+                        if (previous == null || next.gain != previous.gain || newPlay) {
                             envelope.moveTo(next.gain, (next.rampMs * SAMPLE_RATE / 1000).toInt())
                         }
                         mixer.update(next.mix)
@@ -135,17 +141,24 @@ class NoisePlayer internal constructor(
                 } catch (error: RuntimeException) {
                     if (failure == null) failure = error
                 }
-                audioTrack = null
-                val reportFailure = running.getAndSet(false)
+                // Capture the callback before allowing play() to create another renderer.
+                // Cleanup must not overwrite the next renderer's output or callback.
+                val callback = synchronized(this@NoisePlayer) {
+                    audioTrack = null
+                    if (running.getAndSet(false)) errorCallback else null
+                }
                 failure?.let { error ->
-                    if (reportFailure) {
+                    if (callback != null) {
                         logFailure(error)
-                        errorCallback.get()?.invoke()
+                        callback(id)
                     }
                 }
             }
         }
     }
+
+    /** Also checked after posting a failure to the service's main thread. */
+    fun isCurrentRenderer(id: Long): Boolean = rendererId == id
 
     fun update(mix: NoiseMix) {
         target.set(target.get().copy(mix = mix))
@@ -160,6 +173,7 @@ class NoisePlayer internal constructor(
 
     /** Only called after the transition has reached silence, or during destruction. */
     fun stop() {
+        rendererId++
         running.set(false)
         audioTrack?.runCatching { pause() }
         renderThread?.join()

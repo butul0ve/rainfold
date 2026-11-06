@@ -17,6 +17,8 @@ android {
 
     sourceSets.getByName("test").resources.directories.add("src/main/assets")
 
+    testOptions.unitTests.isIncludeAndroidResources = true
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -39,4 +41,5 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }

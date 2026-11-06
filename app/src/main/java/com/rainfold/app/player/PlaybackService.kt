@@ -56,8 +56,6 @@ class PlaybackService : MediaSessionService() {
     private var playbackActive = false
     private var failed = false
     private var releaseGeneration = 0
-    // Pause/Resume cancels a pending release, but must not discard renderer failures.
-    private var rendererGeneration = 0
     private val preferences by lazy { getSharedPreferences("playback", MODE_PRIVATE) }
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -206,7 +204,6 @@ class PlaybackService : MediaSessionService() {
                 if (starting) {
                     releaseGeneration++
                     focusPolicy.cancelResume()
-                    val id = rendererGeneration
                     playbackActive = true
                     if (!wakeLock.isHeld) wakeLock.acquire()
                     engine.play(
@@ -214,8 +211,9 @@ class PlaybackService : MediaSessionService() {
                         if (previous is PlaybackState.Idle) clockSession.settings.fadeIn.inWholeMilliseconds else 50,
                         deadline = clockSession.deadline?.inWholeMilliseconds,
                         fadeOutMs = clockSession.settings.fadeOut.inWholeMilliseconds,
-                    ) {
-                        handler.post { if (id == rendererGeneration) audioFailure() }
+                        fadeFromSilence = previous is PlaybackState.Idle,
+                    ) { id ->
+                        handler.post { if (engine.isCurrentRenderer(id)) audioFailure() }
                     }
                 } else engine.update(next.mix)
                 handler.removeCallbacks(tick)
@@ -243,7 +241,6 @@ class PlaybackService : MediaSessionService() {
         handler.postDelayed({
             if (releaseGeneration == id) {
                 engine.stop()
-                rendererGeneration++
                 if (wakeLock.isHeld) wakeLock.release()
                 if (abandonFocus) {
                     audioManager.abandonAudioFocusRequest(focusRequest)
@@ -306,12 +303,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (clockSession.state() !is PlaybackState.Playing) stopSelf()
+        dispatch(PlaybackCommand.Stop)
     }
 
     override fun onDestroy() {
         releaseGeneration++
-        rendererGeneration++
         handler.removeCallbacksAndMessages(null)
         engine.stop()
         if (wakeLock.isHeld) wakeLock.release()
@@ -368,6 +364,8 @@ class PlaybackService : MediaSessionService() {
             return Futures.immediateVoidFuture()
         }
 
+        // PlaybackService releases the engine and session before releasing this adapter.
+        override fun handleRelease(): ListenableFuture<*> = Futures.immediateVoidFuture()
         override fun handlePrepare(): ListenableFuture<*> = Futures.immediateVoidFuture()
         override fun handleStop(): ListenableFuture<*> {
             dispatch(PlaybackCommand.Stop)
