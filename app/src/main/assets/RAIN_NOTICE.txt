@@ -1,0 +1,25 @@
+Rainfold rain recording
+
+Gentle Rain.wav by shelbyshark
+Original: https://freesound.org/people/shelbyshark/sounds/501243/
+License: Creative Commons Zero 1.0 Universal (CC0-1.0)
+https://creativecommons.org/publicdomain/zero/1.0/
+Full legal text: CC0-1.0.txt, shipped alongside this notice.
+
+Retrieved from the CC0 audio collection in agneswd/Ronumi, commit
+74501ef0134501a886c1a2ebeba809dcb8b0e48d, app/src/main/assets/focus/rain.ogg.
+The mirror documents the original recording, license and processing in
+docs/focus-audio-sources.md and licenses/Freesound-Focus-CC0.txt.
+The original Freesound page was not independently fetched in this environment.
+The mirror uses a high-quality MP3 preview, trims, filters, crossfades and levels it,
+then encodes a 44-second mono 22050 Hz Ogg Vorbis file. No sound was synthesized.
+Mirror SHA-256: 1efaad3144350e0cfc2fc7cb537e7f6aa1e5341136e5af935a884e9e5ce73ded
+
+Rainfold takes the first 30 seconds, applies a gain of 2, and converts to
+48000 Hz mono PCM16 WAVE using ffmpeg 7.1.5-0+deb13u1. No speed/pitch changes.
+Runtime loop: 500 ms linear tail/head overlap, repeated period 29.5 seconds.
+Packaged SHA-256: 107e487f4442654f291be398b1a280cf2d9ad2a5d86d678718585a04822141a0
+Preparation: tools/prepare_rain.py in the Rainfold source repository.
+
+This is a field recording, not a generated placeholder. Sound quality,
+perceived loop continuity and long-session resource use still require acceptance.

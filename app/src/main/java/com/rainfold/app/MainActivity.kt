@@ -22,7 +22,12 @@ class MainActivity : ComponentActivity() {
                 viewModel::togglePlayback,
                 viewModel::setVolume,
                 viewModel::stop,
-                viewModel::configure
+                viewModel::configure,
+                viewModel::setRainVolume,
+                viewModel::toggleNoiseMute,
+                viewModel::toggleRainMute,
+                viewModel::addRain,
+                viewModel::removeRain
             )
         }
     }
