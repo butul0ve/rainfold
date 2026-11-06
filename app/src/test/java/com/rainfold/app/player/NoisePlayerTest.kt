@@ -12,6 +12,110 @@ import org.junit.Test
 
 class NoisePlayerTest {
     @Test
+    fun `rapid stop play restarts fade before renderer observes silence`() {
+        val output = FakeOutput()
+        val player = player { output }
+        try {
+            player.play(NoiseMix(NoiseType.WHITE, 1f), 30) {}
+            repeat(6) {
+                output.writes.await()
+                output.buffers.await()
+                output.results.add(512)
+            }
+            output.writes.await()
+            output.buffers.await()
+            player.fadeToSilence()
+            player.play(NoiseMix(NoiseType.WHITE, 1f), 1000) {}
+            output.results.add(512)
+            output.writes.await()
+            val restarted = output.buffers.await()
+            assertTrue(restarted.any { it != 0f })
+            assertTrue(restarted.all { kotlin.math.abs(it) <= 0.8f * 512 / 48_000 })
+        } finally {
+            player.stop()
+        }
+        assertEquals(1, output.releases.get())
+    }
+
+    @Test
+    fun `old renderer failure keeps its callback when new playback starts during reporting`() {
+        val first = FakeOutput()
+        val second = FakeOutput()
+        val outputs = LinkedBlockingQueue(listOf(first, second))
+        val reporting = LinkedBlockingQueue<Unit>()
+        val continueReporting = LinkedBlockingQueue<Unit>()
+        val failures = LinkedBlockingQueue<String>()
+        val player = NoisePlayer({ outputs.remove() }, { 0 }, {}, {
+            reporting.add(Unit)
+            continueReporting.await()
+        }, { FloatArray(48_000) })
+        try {
+            player.play(NoiseMix(), 30) { id ->
+                failures.add(if (player.isCurrentRenderer(id)) "old-current" else "old")
+            }
+            first.writes.await()
+            first.results.add(-6)
+            reporting.await()
+            player.play(NoiseMix(), 30) { failures.add("new") }
+            second.writes.await()
+            continueReporting.add(Unit)
+            assertEquals("old", failures.await())
+            assertTrue(failures.isEmpty())
+        } finally {
+            continueReporting.offer(Unit)
+            player.stop()
+        }
+        assertEquals(1, first.releases.get())
+        assertEquals(1, second.releases.get())
+    }
+
+    @Test
+    fun `queued failure becomes stale only when another renderer starts`() {
+        val first = FakeOutput()
+        val second = FakeOutput()
+        val outputs = LinkedBlockingQueue(listOf(first, second))
+        val failures = LinkedBlockingQueue<Long>()
+        val player = player { outputs.remove() }
+        try {
+            player.play(NoiseMix(), 30) { failures.add(it) }
+            first.writes.await()
+            first.results.add(-6)
+            val failedRenderer = failures.await()
+            assertTrue(player.isCurrentRenderer(failedRenderer))
+            player.play(NoiseMix(), 30) { failures.add(it) }
+            second.writes.await()
+            // The service performs this check when its posted error reaches the main thread.
+            assertTrue(!player.isCurrentRenderer(failedRenderer))
+        } finally {
+            player.stop()
+        }
+    }
+
+    @Test
+    fun `quick resume continues current gain instead of jumping to silence`() {
+        val output = FakeOutput()
+        val player = NoisePlayer({ output }, { 0 }, {}, {}, { FloatArray(48_000) { 0.5f } })
+        val mix = NoiseMix(noiseMuted = true, rainEnabled = true, rainVolume = 1f)
+        try {
+            player.play(mix, 30) {}
+            repeat(6) {
+                output.writes.await()
+                output.buffers.await()
+                output.results.add(512)
+            }
+            output.writes.await()
+            assertEquals(0.2f, output.buffers.await().first(), 0.00001f)
+            player.fadeToSilence()
+            player.play(mix, 50, fadeFromSilence = false) {}
+            output.results.add(512)
+            output.writes.await()
+            assertTrue(output.buffers.await().all { kotlin.math.abs(it - 0.2f) < 0.00001f })
+        } finally {
+            player.stop()
+        }
+    }
+
+    @Test
     fun `new play after deadline fades in while reusing the output`() {
         val output = FakeOutput()
         val now = AtomicLong()
@@ -98,8 +202,8 @@ class NoisePlayerTest {
             player.play(NoiseMix(), 30) { failures.add(-1) }
             output.writes.await()
             assertTrue(player.fadeToSilence() >= 50)
-            player.play(NoiseMix(NoiseType.BROWN, 0.2f), 50) {
-                failures.add(output.releases.get())
+            player.play(NoiseMix(NoiseType.BROWN, 0.2f), 50, fadeFromSilence = false) { id ->
+                failures.add(if (player.isCurrentRenderer(id)) output.releases.get() else -2)
             }
             output.results.add(-6)
             assertEquals(1, failures.await())

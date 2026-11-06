@@ -16,12 +16,12 @@ internal fun Bundle.putMix(mix: NoiseMix) {
 
 internal fun Bundle.readMix(fallback: NoiseMix = NoiseMix()): NoiseMix = MixPreferences.decode(
     buildMap<String, Any> {
-        if (containsKey("noise")) getString("noise")?.let { put("noise", it) }
+        if (this@readMix.containsKey("noise")) getString("noise")?.let { put("noise", it) }
         listOf("volume", "rainVolume").forEach { key ->
-            if (containsKey(key)) put(key, getFloat(key))
+            if (this@readMix.containsKey(key)) put(key, getFloat(key))
         }
         listOf("rainEnabled", "noiseMuted", "rainMuted").forEach { key ->
-            if (containsKey(key)) put(key, getBoolean(key))
+            if (this@readMix.containsKey(key)) put(key, getBoolean(key))
         }
     }, fallback,
 )
