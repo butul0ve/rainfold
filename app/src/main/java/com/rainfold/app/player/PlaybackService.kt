@@ -35,7 +35,10 @@ import com.rainfold.app.domain.NoiseType
 import com.rainfold.app.domain.PlaybackCommand
 import com.rainfold.app.domain.PlaybackSession
 import com.rainfold.app.domain.PlaybackState
+import com.rainfold.app.domain.SceneLibrary
+import com.rainfold.app.domain.ScenePurpose
 import com.rainfold.app.domain.SessionSettings
+import java.util.UUID
 import com.rainfold.app.dsp.PcmWave
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -55,6 +58,12 @@ class PlaybackService : MediaSessionService() {
     // A domain snapshot can expire before the renderer has been told to stop.
     private var playbackActive = false
     private var failed = false
+    private var encodedLibrary = SceneLibraryJson.encode(SceneLibrary())
+    private var library = SceneLibrary()
+        set(value) {
+            field = value
+            encodedLibrary = SceneLibraryJson.encode(value)
+        }
     private var releaseGeneration = 0
     private val preferences by lazy { getSharedPreferences("playback", MODE_PRIVATE) }
     private val noisyReceiver = object : BroadcastReceiver() {
@@ -82,6 +91,7 @@ class PlaybackService : MediaSessionService() {
                 preferences.getLong("fadeOut", 10_000).coerceIn(0, 60_000).milliseconds,
             )
         )
+        library = SceneLibraryJson.decode(preferences.getString(SceneLibraryJson.KEY, null))
         audioManager = getSystemService(AudioManager::class.java)
         wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
@@ -134,7 +144,8 @@ class PlaybackService : MediaSessionService() {
                     return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(
                             MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-                                .add(SessionCommand(UPDATE, Bundle.EMPTY)).build()
+                                .add(SessionCommand(UPDATE, Bundle.EMPTY))
+                                .add(SessionCommand(SCENE, Bundle.EMPTY)).build()
                         ).build()
                 }
 
@@ -142,6 +153,14 @@ class PlaybackService : MediaSessionService() {
                     session: MediaSession, controller: MediaSession.ControllerInfo,
                     customCommand: SessionCommand, args: Bundle
                 ): ListenableFuture<SessionResult> {
+                    if (customCommand.customAction == SCENE) {
+                        return try {
+                            handleSceneCommand(args)
+                            Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                        } catch (_: IllegalArgumentException) {
+                            Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
+                        }
+                    }
                     if (customCommand.customAction != UPDATE) return Futures.immediateFuture(
                         SessionResult(SessionError.ERROR_NOT_SUPPORTED)
                     )
@@ -265,6 +284,38 @@ class PlaybackService : MediaSessionService() {
         publish()
     }
 
+    /** All scene edits run on the session looper and capture the service's authoritative mix. */
+    internal fun handleSceneCommand(args: Bundle) {
+        val id = args.getString("id").orEmpty()
+        when (args.getString("operation")) {
+            "select", "play" -> {
+                library = library.select(id)
+                dispatch(PlaybackCommand.UpdateMix(checkNotNull(library.selected).mix))
+                if (args.getString("operation") == "play") {
+                    when (clockSession.state()) {
+                        is PlaybackState.Paused -> dispatch(PlaybackCommand.Resume)
+                        PlaybackState.Idle -> dispatch(PlaybackCommand.Play)
+                        is PlaybackState.Playing -> Unit
+                    }
+                }
+            }
+            "save" -> library = library.save("user:${UUID.randomUUID()}",
+                args.getString("name").orEmpty(), clockSession.mix,
+                ScenePurpose.valueOf(args.getString("purpose").orEmpty()))
+            "rename" -> library = library.rename(id, args.getString("name").orEmpty())
+            "copy" -> {
+                val source = requireNotNull(library.scenes.find { it.id == id })
+                library = library.save("user:${UUID.randomUUID()}", args.getString("name").orEmpty(),
+                    source.mix, source.purpose).copy(selectedId = library.selectedId)
+            }
+            "delete" -> library = library.delete(id)
+            "favorite" -> library = library.toggleFavorite(id)
+            else -> throw IllegalArgumentException("Unknown scene operation")
+        }
+        saveSettings()
+        publish()
+    }
+
     private fun saveSettings() {
         val edit = preferences.edit()
         MixPreferences.encode(clockSession.mix).forEach { (key, value) ->
@@ -275,6 +326,7 @@ class PlaybackService : MediaSessionService() {
             }
         }
         edit
+            .putString(SceneLibraryJson.KEY, encodedLibrary)
             .putLong("duration", clockSession.settings.duration?.inWholeMilliseconds ?: 0)
             .putLong("fadeIn", clockSession.settings.fadeIn.inWholeMilliseconds)
             .putLong("fadeOut", clockSession.settings.fadeOut.inWholeMilliseconds).apply()
@@ -285,6 +337,7 @@ class PlaybackService : MediaSessionService() {
         val state = clockSession.state()
         mediaSession?.setSessionExtras(Bundle().apply {
             putMix(clockSession.mix)
+            putString(SceneLibraryJson.KEY, encodedLibrary)
             putString(
                 "status", when (state) {
                     is PlaybackState.Playing -> "playing"; is PlaybackState.Paused -> "paused"; else -> "idle"
@@ -330,9 +383,13 @@ class PlaybackService : MediaSessionService() {
                     NoiseType.BROWN -> R.string.brown_noise
                 }
             )
-            val title = if (clockSession.mix.rainEnabled) {
+            val mixTitle = if (clockSession.mix.rainEnabled) {
                 getString(R.string.noise_and_rain, noiseTitle)
             } else noiseTitle
+            val title = library.selected?.let { scene ->
+                val name = sceneTitle(scene)
+                if (scene.mix == clockSession.mix) name else getString(R.string.scene_modified, name)
+            } ?: mixTitle
             return State.Builder().setAvailableCommands(
                 Player.Commands.Builder().addAll(
                     Player.COMMAND_PLAY_PAUSE, Player.COMMAND_PREPARE, Player.COMMAND_STOP,
@@ -374,6 +431,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
+        const val SCENE = "com.rainfold.app.SCENE"
         const val UPDATE = "com.rainfold.app.UPDATE"
     }
 }

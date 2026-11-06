@@ -8,6 +8,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rainfold.app.ui.PlaybackViewModel
 import com.rainfold.app.ui.RainfoldScreen
+import com.rainfold.app.ui.SceneActions
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class MainActivity : ComponentActivity() {
@@ -27,7 +28,10 @@ class MainActivity : ComponentActivity() {
                 viewModel::toggleNoiseMute,
                 viewModel::toggleRainMute,
                 viewModel::addRain,
-                viewModel::removeRain
+                viewModel::removeRain,
+                SceneActions(viewModel::selectScene, viewModel::saveScene, viewModel::renameScene,
+                    viewModel::copyScene, viewModel::deleteScene, viewModel::favoriteScene),
+                viewModel::toggleAmoled
             )
         }
     }
