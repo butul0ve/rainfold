@@ -17,6 +17,13 @@ import com.rainfold.app.domain.PlaybackState
 import com.rainfold.app.domain.SceneLibrary
 import com.rainfold.app.domain.ScenePurpose
 import com.rainfold.app.domain.SessionSettings
+import com.rainfold.app.domain.SessionMode
+import com.rainfold.app.domain.defaults
+import com.rainfold.app.player.putSettings
+import com.rainfold.app.player.readSettings
+import com.rainfold.app.reminders.BedtimeReminder
+import com.rainfold.app.reminders.ReminderSettings
+import kotlin.time.Duration
 import com.rainfold.app.player.SceneLibraryJson
 import com.rainfold.app.player.readMix
 import com.rainfold.app.player.PlaybackService
@@ -33,12 +40,16 @@ data class PlaybackScreenState(
     val settings: SessionSettings = SessionSettings(),
     val sceneError: Boolean = false,
     val amoled: Boolean = false,
+    val focusToday: Int = 0,
+    val breakRemaining: Duration? = null,
+    val reminder: ReminderSettings = ReminderSettings(),
 )
 
 @UnstableApi
 class PlaybackViewModel(application: Application) : AndroidViewModel(application) {
     private val appearance = application.getSharedPreferences("appearance", Application.MODE_PRIVATE)
-    private val mutableState = MutableStateFlow(PlaybackScreenState(amoled = appearance.getBoolean("amoled", false)))
+    private val bedtime = BedtimeReminder(application)
+    private val mutableState = MutableStateFlow(PlaybackScreenState(amoled = appearance.getBoolean("amoled", false), reminder = bedtime.settings))
     val state = mutableState.asStateFlow()
     private var encodedLibrary: String? = null
     private var library = SceneLibrary()
@@ -54,6 +65,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }).buildAsync()
 
     init {
+        bedtime.schedule()
         future.addListener({
             runCatching { future.get() }.onSuccess {
                 controller = it
@@ -74,10 +86,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             "playing" -> PlaybackState.Playing(mix, remaining)
             "paused" -> PlaybackState.Paused(mix, remaining)
             else -> PlaybackState.Idle
-        }, true, extras.getBoolean("failed"), library, SessionSettings(
-            extras.getLong("duration").takeIf { it > 0 }?.milliseconds,
-            extras.getLong("fadeIn").milliseconds, extras.getLong("fadeOut").milliseconds),
-            sceneError = mutableState.value.sceneError, amoled = mutableState.value.amoled)
+        }, true, extras.getBoolean("failed"), library, extras.readSettings(SessionMode.CUSTOM.defaults()),
+            sceneError = mutableState.value.sceneError, amoled = mutableState.value.amoled,
+            focusToday = extras.getInt("focusToday"),
+            breakRemaining = extras.getLong("breakRemaining", -1).takeIf { it >= 0 }?.milliseconds,
+            reminder = bedtime.settings)
     }
 
     fun toggleAmoled() {
@@ -97,11 +110,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     fun toggleRainMute() = send(Bundle().apply { putBoolean("rainMuted", !state.value.mix.rainMuted) })
     fun addRain() = send(Bundle().apply { putBoolean("rainEnabled", true) })
     fun removeRain() = send(Bundle().apply { putBoolean("rainEnabled", false) })
-    fun configure(settings: SessionSettings) = send(Bundle().apply {
-        putLong("duration", settings.duration?.inWholeMilliseconds ?: 0)
-        putLong("fadeIn", settings.fadeIn.inWholeMilliseconds)
-        putLong("fadeOut", settings.fadeOut.inWholeMilliseconds)
-    })
+    fun configure(settings: SessionSettings) = send(Bundle().apply { putSettings(settings) })
+    fun selectMode(mode: SessionMode) = configure(mode.defaults())
+    fun configureReminder(settings: ReminderSettings) {
+        bedtime.configure(settings)
+        mutableState.value = state.value.copy(reminder = bedtime.settings)
+    }
     fun selectScene(id: String, play: Boolean) = sceneCommand(if (play) "play" else "select", id)
     fun saveScene(name: String, purpose: ScenePurpose) = sceneCommand("save", name = name, purpose = purpose)
     fun renameScene(id: String, name: String) = sceneCommand("rename", id, name)

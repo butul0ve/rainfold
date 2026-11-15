@@ -13,6 +13,7 @@ import com.rainfold.app.dsp.GainRamp
 import com.rainfold.app.dsp.SessionFade
 import com.rainfold.app.dsp.SeamlessLoop
 import com.rainfold.app.dsp.SoundLayerMixer
+import com.rainfold.app.dsp.CompletionCue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
@@ -44,6 +45,8 @@ class NoisePlayer internal constructor(
         val fadeOutMs: Long = 30,
         val playId: Long = 0,
         val fadeFromSilence: Boolean = true,
+        val sequentialFade: Boolean = false,
+        val cueStartedMs: Long? = null,
     )
 
     private val target = AtomicReference(Target(NoiseMix(), 0f, 30))
@@ -62,6 +65,7 @@ class NoisePlayer internal constructor(
         deadline: Long? = null,
         fadeOutMs: Long = 0,
         fadeFromSilence: Boolean = true,
+        sequentialFade: Boolean = false,
         onError: (Long) -> Unit,
     ) {
         errorCallback = onError
@@ -69,7 +73,7 @@ class NoisePlayer internal constructor(
         target.set(
             Target(
                 mix, 1f, fadeMs.coerceAtLeast(30), deadline,
-                fadeOutMs.coerceAtLeast(30), target.get().playId + 1, fadeFromSilence,
+                fadeOutMs.coerceAtLeast(30), target.get().playId + 1, fadeFromSilence, sequentialFade,
             )
         )
         if (running.getAndSet(true)) return
@@ -104,11 +108,16 @@ class NoisePlayer internal constructor(
                     }
                     val remaining = next.deadlineMs?.minus(now)
                     buffer.indices.forEach { index ->
-                        val timedGain = SessionFade.gain(
-                            remaining?.let { it - index * 1000.0 / SAMPLE_RATE }, next.fadeOutMs,
-                        )
+                        val sampleRemaining = remaining?.let { it - index * 1000.0 / SAMPLE_RATE }
+                        val mixed = if (next.sequentialFade) mixer.nextSample(
+                            SessionFade.noiseGain(sampleRemaining, next.fadeOutMs),
+                            SessionFade.rainGain(sampleRemaining, next.fadeOutMs),
+                        ) else mixer.nextSample() * SessionFade.gain(sampleRemaining, next.fadeOutMs)
+                        val cue = next.cueStartedMs?.let {
+                            CompletionCue.sample(now - it + index * 1000.0 / SAMPLE_RATE)
+                        }
                         buffer[index] = AudioLimiter.limit(
-                            mixer.nextSample() * envelope.next() * timedGain
+                            (cue ?: mixed) * envelope.next()
                         )
                     }
                     if (BuildConfig.DEBUG) {
@@ -162,6 +171,12 @@ class NoisePlayer internal constructor(
 
     fun update(mix: NoiseMix) {
         target.set(target.get().copy(mix = mix))
+    }
+
+    /** Called only by the service after a naturally completed Focus session with audio focus. */
+    fun playCompletionCue() {
+        target.set(target.get().copy(gain = 1f, rampMs = 30, deadlineMs = null,
+            cueStartedMs = elapsedRealtime(), sequentialFade = false))
     }
 
     fun fadeToSilence(): Long {
