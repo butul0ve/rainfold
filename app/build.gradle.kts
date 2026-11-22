@@ -15,9 +15,18 @@ android {
         versionName = "0.1.0"
     }
 
+    sourceSets.getByName("test").resources.directories.add("src/main/assets")
+
+    testOptions.unitTests.isIncludeAndroidResources = true
+
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    bundle {
+        // Every language must remain available when switching without a network connection.
+        language.enableSplit = false
     }
 
     packaging {
@@ -28,6 +37,7 @@ android {
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.media3.common)
@@ -37,4 +47,5 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }
